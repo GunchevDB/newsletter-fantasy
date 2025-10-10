@@ -19,6 +19,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const SUBSCRIBERS_SET_KEY = 'newsletter:subscribers';
 const SUBSCRIBER_HASH_PREFIX = 'newsletter:subscriber:';
+const RESEND_BATCH_SIZE = 2;
+const RESEND_BATCH_DELAY_MS = 1000;
+const RESEND_MAX_RATE_LIMIT_RETRIES = 2;
+const RATE_LIMIT_BACKOFF_SCHEDULE_MS = [2000, 4000];
 
 /**
  * Tiny timestamped logger for consistent console output in production.
@@ -270,6 +274,27 @@ function escapeHtml(value) {
 function normalizeEmail(value) {
   const email = extractEmailAddress(value);
   return email ? email.toLowerCase() : null;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(error) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const statusCandidates = [
+    error.statusCode,
+    error.status,
+    error?.response?.statusCode,
+    error?.response?.status,
+  ].filter((value) => typeof value === 'number');
+  if (statusCandidates.includes(429)) {
+    return true;
+  }
+  const message = (error.message || '').toString().toLowerCase();
+  return message.includes('rate limit') || message.includes('too many requests');
 }
 
 /**
@@ -740,6 +765,117 @@ async function subscriberExists(email) {
   return inMemorySubscribers.has(normalized);
 }
 
+async function sendNewsletterToSubscriber(subscriber, options) {
+  const { title, sanitizedContent, previewSnippet, strippedContent, unsubscribeBase } = options;
+
+  const recipientEmail = normalizeEmail(subscriber.email);
+  if (!recipientEmail) {
+    return {
+      success: false,
+      error: new Error('Stored subscriber email is invalid.'),
+      durationMs: 0,
+      attempt: 0,
+      retryDelays: [],
+      unsubscribeLink: null,
+      recipientEmail: subscriber.email,
+    };
+  }
+
+  const unsubscribeLink = `${unsubscribeBase}/unsubscribe?email=${encodeURIComponent(
+    recipientEmail,
+  )}`;
+
+  const personalizedHtml = buildEmailTemplate(
+    title,
+    sanitizedContent,
+    previewSnippet,
+    unsubscribeLink,
+    subscriber.name || '',
+  );
+
+  const plainTextBody = `${
+    previewSnippet ? `${previewSnippet}\n\n` : ''
+  }${strippedContent}\n\nUnsubscribe: ${unsubscribeLink}`;
+
+  const payload = {
+    from: senderEmail,
+    to: [recipientEmail],
+    subject: title,
+    html: personalizedHtml,
+    text: plainTextBody,
+  };
+
+  const baseContext = {
+    endpoint: 'send-newsletter',
+    subject: title,
+    recipient: recipientEmail,
+    previewTextLength: previewSnippet.length,
+  };
+
+  let attempt = 0;
+  const retryDelays = [];
+  let lastResult = null;
+
+  while (attempt <= RESEND_MAX_RATE_LIMIT_RETRIES) {
+    const attemptNumber = attempt + 1;
+    const sendResult = await sendWithResend(payload, { ...baseContext, attempt: attemptNumber });
+    lastResult = sendResult;
+
+    if (sendResult.success && sendResult.data?.id) {
+      return {
+        success: true,
+        data: sendResult.data,
+        durationMs: sendResult.durationMs,
+        attempt: attemptNumber,
+        retryDelays,
+        unsubscribeLink,
+        recipientEmail,
+      };
+    }
+
+    const error = sendResult.error || new Error('Unknown Resend error.');
+
+    if (isRateLimitError(error) && attempt < RESEND_MAX_RATE_LIMIT_RETRIES) {
+      const backoffMs =
+        RATE_LIMIT_BACKOFF_SCHEDULE_MS[attempt] ||
+        RATE_LIMIT_BACKOFF_SCHEDULE_MS[RATE_LIMIT_BACKOFF_SCHEDULE_MS.length - 1];
+      retryDelays.push(backoffMs);
+      logger.warn('Resend rate limit encountered; retry scheduled.', {
+        email: recipientEmail,
+        attempt: attemptNumber,
+        backoffMs,
+      });
+      await sleep(backoffMs);
+      attempt += 1;
+      continue;
+    }
+
+    return {
+      success: false,
+      error,
+      durationMs: sendResult.durationMs,
+      attempt: attemptNumber,
+      retryDelays,
+      resendResponse: sendResult.data,
+      unsubscribeLink,
+      recipientEmail,
+    };
+  }
+
+  return {
+    success: false,
+    error: lastResult?.error || new Error('Exceeded maximum retry attempts.'),
+    durationMs: lastResult?.durationMs ?? 0,
+    attempt: RESEND_MAX_RATE_LIMIT_RETRIES + 1,
+    retryDelays:
+      RATE_LIMIT_BACKOFF_SCHEDULE_MS.slice(0, RESEND_MAX_RATE_LIMIT_RETRIES) ||
+      RATE_LIMIT_BACKOFF_SCHEDULE_MS,
+    resendResponse: lastResult?.data,
+    unsubscribeLink,
+    recipientEmail,
+  };
+}
+
 /**
  * Extract the actual email address from a value that may include a display name.
  */
@@ -1114,115 +1250,166 @@ app.post('/api/send-newsletter', async (req, res) => {
     const unsubscribeBase = appUrl.replace(/\/$/, '');
     const strippedContent = stripHtml(sanitizedContent);
     const previewSnippet = typeof previewText === 'string' ? previewText.trim() : '';
+    const totalSubscribers = subscribers.length;
+    const batchesEstimated = Math.ceil(totalSubscribers / RESEND_BATCH_SIZE);
+    const estimatedDurationMs = Math.max(batchesEstimated - 1, 0) * RESEND_BATCH_DELAY_MS;
+    const estimatedCompletion =
+      totalSubscribers > 0
+        ? new Date(Date.now() + estimatedDurationMs).toISOString()
+        : new Date().toISOString();
+
+    logger.info('Newsletter send queued with rate limiting.', {
+      totalSubscribers,
+      batchSize: RESEND_BATCH_SIZE,
+      batchesEstimated,
+      rateLimitDelayMs: RESEND_BATCH_DELAY_MS,
+      estimatedCompletion,
+    });
+
     const summary = {
-      total: subscribers.length,
+      total: totalSubscribers,
+      batchSize: RESEND_BATCH_SIZE,
+      batchesEstimated,
+      delayMsBetweenBatches: RESEND_BATCH_DELAY_MS,
+      estimatedCompletion,
       successes: [],
       failures: [],
+      skipped: [],
+      progressUpdates: [],
+      startedAt: new Date().toISOString(),
+      estimatedDurationMs,
     };
 
-    for (const subscriber of subscribers) {
-      const recipientEmail = normalizeEmail(subscriber.email);
+    const queueStart = performance.now();
+    let processed = 0;
 
-      if (!recipientEmail) {
-        logger.error('Stored subscriber email is invalid. Skipping recipient.', {
-          rawValue: subscriber.email,
+    for (let batchIndex = 0; batchIndex < batchesEstimated; batchIndex += 1) {
+      const batchStart = batchIndex * RESEND_BATCH_SIZE;
+      const batch = subscribers.slice(batchStart, batchStart + RESEND_BATCH_SIZE);
+
+      for (const subscriber of batch) {
+        processed += 1;
+
+        const result = await sendNewsletterToSubscriber(subscriber, {
+          title,
+          sanitizedContent,
+          previewSnippet,
+          strippedContent,
+          unsubscribeBase,
         });
-        summary.failures.push({
-          email: subscriber.email,
-          error: 'Stored subscriber email is invalid.',
-          statusCode: 400,
+
+        if (result.success) {
+          summary.successes.push({
+            email: result.recipientEmail,
+            id: result.data?.id,
+            durationMs: result.durationMs,
+            attempts: result.attempt,
+            dns: result.data?.dns,
+            spf: result.data?.spf,
+            dkim: result.data?.dkim,
+            batch: batchIndex + 1,
+            queueIndex: processed,
+            retryBackoffMs: result.retryDelays,
+            unsubscribeLink: result.unsubscribeLink,
+          });
+        } else {
+          const failureMessage = result.error?.message || 'Unknown Resend error.';
+          summary.failures.push({
+            email: result.recipientEmail,
+            error: failureMessage,
+            statusCode:
+              result.error?.statusCode || result.error?.response?.statusCode || undefined,
+            attempts: result.attempt,
+            retryBackoffMs: result.retryDelays,
+            response: result.resendResponse,
+            suggestions: buildResendSuggestions(failureMessage),
+            batch: batchIndex + 1,
+            queueIndex: processed,
+            rateLimitExceeded: isRateLimitError(result.error),
+            unsubscribeLink: result.unsubscribeLink,
+          });
+        }
+
+        const progressEntry = {
+          processed,
+          sent: summary.successes.length,
+          failed: summary.failures.length,
+          total: totalSubscribers,
+          batch: batchIndex + 1,
+          timestamp: new Date().toISOString(),
+          message: `Processed ${processed}/${totalSubscribers} (sent ${summary.successes.length}, failed ${summary.failures.length}).`,
+        };
+        summary.progressUpdates.push(progressEntry);
+
+        logger.info('Newsletter send progress update.', {
+          processed,
+          total: totalSubscribers,
+          sent: summary.successes.length,
+          failed: summary.failures.length,
+          batch: batchIndex + 1,
+          email: result.recipientEmail,
+          success: result.success,
+          progressMessage: `Sent ${summary.successes.length}/${totalSubscribers} emails...`,
         });
-        continue;
       }
 
-      const unsubscribeLink = `${unsubscribeBase}/unsubscribe?email=${encodeURIComponent(
-        recipientEmail,
-      )}`;
-
-      const personalizedHtml = buildEmailTemplate(
-        title,
-        sanitizedContent,
-        previewSnippet,
-        unsubscribeLink,
-        subscriber.name || '',
-      );
-
-      const plainTextBody = `${
-        previewSnippet ? `${previewSnippet}\n\n` : ''
-      }${strippedContent}\n\nUnsubscribe: ${unsubscribeLink}`;
-
-      const sendResult = await sendWithResend(
-        {
-          from: senderEmail,
-          to: [recipientEmail],
-          subject: title,
-          html: personalizedHtml,
-          text: plainTextBody,
-        },
-        {
-          endpoint: 'send-newsletter',
-          subject: title,
-          recipient: recipientEmail,
-          previewTextLength: previewSnippet.length,
-        },
-      );
-
-      if (sendResult.success && sendResult.data?.id) {
-        summary.successes.push({
-          email: recipientEmail,
-          id: sendResult.data.id,
-          durationMs: sendResult.durationMs,
-          dns: sendResult.data?.dns,
-          spf: sendResult.data?.spf,
-          dkim: sendResult.data?.dkim,
+      if (batchIndex < batchesEstimated - 1) {
+        logger.info('Rate limit pause between batches.', {
+          completedBatch: batchIndex + 1,
+          delayMs: RESEND_BATCH_DELAY_MS,
         });
-      } else {
-        const resendError = sendResult.error;
-        const failureMessage =
-          resendError?.message || sendResult.data?.message || 'Unknown Resend error.';
-        summary.failures.push({
-          email: recipientEmail,
-          error: failureMessage,
-          statusCode: resendError?.statusCode,
-          response: resendError?.response || sendResult.data,
-          suggestions: buildResendSuggestions(failureMessage),
-        });
+        await sleep(RESEND_BATCH_DELAY_MS);
       }
     }
 
-    const totalDuration = summary.successes.reduce(
-      (acc, item) => acc + (item.durationMs || 0),
-      0,
-    );
+    const elapsedMs = Math.round(performance.now() - queueStart);
+    summary.elapsedMs = elapsedMs;
+    summary.sentCount = summary.successes.length;
+    summary.failedCount = summary.failures.length;
+    summary.skippedCount = summary.skipped.length;
+    summary.completedBatches = Math.ceil(processed / RESEND_BATCH_SIZE);
+    summary.completedAt = new Date().toISOString();
+    summary.totalProcessed = processed;
+    summary.successRate =
+      processed > 0 ? Number((summary.sentCount / processed).toFixed(4)) : 0;
+
+    logger.info('Newsletter send completed.', {
+      totalSubscribers,
+      sent: summary.sentCount,
+      failed: summary.failedCount,
+      elapsedMs,
+      batchesProcessed: summary.completedBatches,
+    });
 
     lastEmailDiagnostic = {
       timestamp: new Date().toISOString(),
       status:
-        summary.failures.length === 0
+        summary.failedCount === 0
           ? 'success'
-          : summary.failures.length === summary.total
+          : summary.sentCount === 0
           ? 'error'
           : 'partial',
       context: 'send-newsletter',
       recipients: subscribers
         .map((subscriber) => normalizeEmail(subscriber.email))
         .filter(Boolean),
-      durationMs: totalDuration,
+      durationMs: elapsedMs,
       response: summary,
     };
 
-    if (summary.failures.length === summary.total) {
+    if (summary.sentCount === 0 && summary.failedCount > 0) {
       res.status(502).json({
-        message: 'Failed to send newsletter to subscribers.',
+        message: 'Failed to send newsletter; all emails encountered errors.',
         summary,
       });
       return;
     }
 
-    res.status(summary.failures.length ? 207 : 200).json({
-      message: summary.failures.length
-        ? 'Newsletter sent with some issues.'
-        : 'Newsletter sent successfully.',
+    res.status(summary.failedCount > 0 ? 207 : 200).json({
+      message:
+        summary.failedCount > 0
+          ? 'Newsletter sent with some issues.'
+          : 'Newsletter sent successfully with rate limiting.',
       summary,
     });
   } catch (error) {
@@ -1242,7 +1429,7 @@ app.post('/api/send-newsletter', async (req, res) => {
     const suggestions =
       error instanceof SubscriberStorageError
         ? [
-            'Confirm KV_REST_API_URL and KV_REST_API_TOKEN are set and valid.',
+            'Confirm STORAGE_REST_API_URL and STORAGE_REST_API_TOKEN are set and valid.',
             'Verify the Vercel KV database is accessible from this environment.',
           ]
         : buildResendSuggestions(error?.message);
