@@ -1,30 +1,128 @@
 /**
- * Frontend logic for the newsletter builder.
- * Handles rich text editing, preview, subscriber management,
- * sending newsletters, and image uploads.
+ * Frontend logic for the redesigned newsletter builder.
+ * Handles navigation, compose workflow, preview modal, subscriber management,
+ * image uploads, draft persistence, and sending newsletters.
  */
-document.addEventListener('DOMContentLoaded', () => {
-  const titleInput = document.getElementById('newsletter-title');
-  const previewTextInput = document.getElementById('newsletter-preview-text');
-  const editor = document.getElementById('newsletter-content');
-  const previewFrame = document.getElementById('email-preview');
-  const previewButton = document.getElementById('preview-button');
-  const sendButton = document.getElementById('send-button');
-  const sendStatus = document.getElementById('send-status');
-  const toolbarButtons = document.querySelectorAll('.toolbar button[data-command]');
-  const uploadTrigger = document.getElementById('upload-image-trigger');
-  const uploadInput = document.getElementById('image-upload-input');
 
-  const subscriberList = document.getElementById('subscriber-items');
-  const subscriberTemplate = document.getElementById('subscriber-item-template');
-  const addSubscriberForm = document.getElementById('add-subscriber-form');
-  const subscriberEmailInput = document.getElementById('subscriber-email');
-  const subscriberStatus = document.getElementById('subscriber-status');
+document.addEventListener('DOMContentLoaded', () => {
   const DOMPURIFY_CONFIG = {
     USE_PROFILES: { html: true },
     ALLOWED_URI_REGEXP: /^(https?:|mailto:)/i,
   };
+  const DRAFT_STORAGE_KEY = 'newsletter-draft';
+  const PREVIEW_MAX_LENGTH = 150;
+  const SUBSCRIBER_PAGE_SIZE = 50;
+  const SOURCE_LABELS = {
+    manual: 'Manual',
+    'public-api': 'Public form',
+    'public-form': 'Public form',
+    imported: 'Imported',
+    automation: 'Automation',
+    referral: 'Referral',
+  };
 
+  // Navigation -----------------------------------------------------------------
+  const navTabs = document.querySelectorAll('.nav-tab');
+  const views = document.querySelectorAll('.view-card');
+  const mobileNavToggle = document.getElementById('mobile-nav-toggle');
+  const primaryNav = document.getElementById('primary-nav');
+  const logoutButton = document.getElementById('logout-button');
+
+  function toggleNav(forceOpen) {
+    const isOpen = forceOpen ?? !primaryNav.classList.contains('is-open');
+    primaryNav.classList.toggle('is-open', isOpen);
+    mobileNavToggle.setAttribute('aria-expanded', String(isOpen));
+  }
+
+  function activateView(targetId) {
+    navTabs.forEach((tab) => {
+      const isActive = tab.dataset.target === targetId;
+      tab.classList.toggle('is-active', isActive);
+      tab.setAttribute('aria-selected', String(isActive));
+    });
+
+    views.forEach((view) => {
+      const isActive = view.dataset.view === targetId;
+      view.classList.toggle('is-active', isActive);
+      view.hidden = !isActive;
+      if (isActive) {
+        view.setAttribute('tabindex', '-1');
+        view.focus({ preventScroll: false });
+        view.removeAttribute('tabindex');
+      }
+    });
+  }
+
+  navTabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      activateView(tab.dataset.target);
+      if (primaryNav.classList.contains('is-open')) {
+        toggleNav(false);
+      }
+    });
+  });
+
+  if (mobileNavToggle) {
+    mobileNavToggle.addEventListener('click', () => toggleNav());
+  }
+
+  window.addEventListener('resize', () => {
+    if (window.innerWidth >= 992 && primaryNav.classList.contains('is-open')) {
+      toggleNav(false);
+    }
+  });
+
+  views.forEach((view) => {
+    view.hidden = !view.classList.contains('is-active');
+  });
+
+  // Compose references ---------------------------------------------------------
+  const titleInput = document.getElementById('newsletter-title');
+  const previewTextInput = document.getElementById('newsletter-preview-text');
+  const previewCounter = document.getElementById('preview-char-counter');
+  const editor = document.getElementById('newsletter-content');
+  const toolbarButtons = document.querySelectorAll('.editor-toolbar button[data-command]');
+  const uploadTrigger = document.getElementById('upload-image-trigger');
+  const uploadInput = document.getElementById('image-upload-input');
+  const imageUploadStatus = document.getElementById('image-upload-status');
+  const previewButton = document.getElementById('preview-button');
+  const previewModal = document.getElementById('preview-modal');
+  const previewClose = document.getElementById('preview-close');
+  const previewFrame = document.getElementById('email-preview');
+  const sendButton = document.getElementById('send-button');
+  const saveDraftButton = document.getElementById('save-draft-button');
+  const sendStatus = document.getElementById('send-status');
+  const modalBackdrop = previewModal?.querySelector('[data-close-modal]');
+
+  // Subscriber references ------------------------------------------------------
+  const subscriberRowTemplate = document.getElementById('subscriber-row-template');
+  const subscriberTableBody = document.getElementById('subscriber-table-body');
+  const subscriberCount = document.getElementById('subscriber-total');
+  const subscriberStatus = document.getElementById('subscriber-status');
+  const subscriberSearch = document.getElementById('subscriber-search');
+  const subscriberFilter = document.getElementById('subscriber-filter');
+  const subscriberLoading = document.getElementById('subscriber-loading');
+  const subscriberEmptyState = document.getElementById('subscribers-empty');
+  const subscriberPrev = document.getElementById('subscriber-prev');
+  const subscriberNext = document.getElementById('subscriber-next');
+  const subscriberPageInfo = document.getElementById('subscriber-page-info');
+  const toggleAddSubscriberButton = document.getElementById('toggle-add-subscriber');
+  const addSubscriberForm = document.getElementById('add-subscriber-form');
+  const cancelAddSubscriberButton = document.getElementById('cancel-add-subscriber');
+  const subscriberEmailInput = document.getElementById('subscriber-email');
+  const subscriberNameInput = document.getElementById('subscriber-name');
+
+  let subscribersCache = [];
+  let filteredSubscribers = [];
+  let currentSubscriberPage = 1;
+  let searchDebounceTimeout = null;
+
+  if (toggleAddSubscriberButton) {
+    toggleAddSubscriberButton.dataset.defaultContent = toggleAddSubscriberButton.innerHTML;
+    toggleAddSubscriberButton.setAttribute('aria-expanded', 'false');
+  }
+
+  // Utility helpers ------------------------------------------------------------
   function sanitizeEditorHtml(raw) {
     if (!window.DOMPurify) {
       console.warn('DOMPurify not found; skipping client-side sanitization.');
@@ -33,25 +131,78 @@ document.addEventListener('DOMContentLoaded', () => {
     return window.DOMPurify.sanitize(raw, DOMPURIFY_CONFIG);
   }
 
-  /**
-   * Helper to show status messages beside send button.
-   */
+  function updatePreviewCounter() {
+    const length = previewTextInput.value.length;
+    previewCounter.textContent = `${length} / ${PREVIEW_MAX_LENGTH}`;
+    previewCounter.classList.toggle('limit-reached', length >= PREVIEW_MAX_LENGTH);
+  }
+
   function setSendStatus(message, isError = false) {
+    if (!sendStatus) {
+      return;
+    }
     sendStatus.textContent = message;
-    sendStatus.style.color = isError ? '#b91c1c' : '#2563eb';
+    sendStatus.classList.toggle('is-error', isError);
   }
 
-  /**
-   * Helper to show subscriber related status messages.
-   */
+  function setInlineStatus(element, message, isError = false) {
+    if (!element) {
+      return;
+    }
+    element.textContent = message;
+    element.classList.toggle('is-error', isError);
+  }
+
   function setSubscriberStatus(message, isError = false) {
+    if (!subscriberStatus) {
+      return;
+    }
     subscriberStatus.textContent = message;
-    subscriberStatus.style.color = isError ? '#b91c1c' : '#2563eb';
+    subscriberStatus.classList.toggle('is-error', isError);
   }
 
-  /**
-   * Create the same HTML template used by the server so preview matches sent email.
-   */
+  function redirectToLogin() {
+    const currentLocation = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const fallback = currentLocation && currentLocation !== '' ? currentLocation : '/';
+    window.location.href = `/login?next=${encodeURIComponent(fallback)}`;
+  }
+
+  function handleUnauthorizedResponse(response) {
+    if (response && response.status === 401) {
+      redirectToLogin();
+      return true;
+    }
+    return false;
+  }
+
+  function setSubscriberLoading(isLoading) {
+    if (!subscriberLoading) {
+      return;
+    }
+    subscriberLoading.classList.toggle('hidden', !isLoading);
+  }
+
+  function setButtonLoading(button, isLoading, loadingLabel = 'Loading…') {
+    if (!button) {
+      return;
+    }
+    if (isLoading) {
+      if (!button.dataset.originalContent) {
+        button.dataset.originalContent = button.innerHTML;
+      }
+      button.classList.add('is-loading');
+      button.disabled = true;
+      button.innerHTML = `<span class="spinner" aria-hidden="true"></span>${loadingLabel}`;
+    } else {
+      button.classList.remove('is-loading');
+      button.disabled = false;
+      if (button.dataset.originalContent) {
+        button.innerHTML = button.dataset.originalContent;
+        delete button.dataset.originalContent;
+      }
+    }
+  }
+
   function buildEmailTemplate(title, content, previewText = '', unsubscribeLink = '') {
     return `
       <!DOCTYPE html>
@@ -70,6 +221,7 @@ document.addEventListener('DOMContentLoaded', () => {
               padding: 0;
               background-color: #f6f6f6;
               font-family: Arial, Helvetica, sans-serif;
+              color: #374151;
             }
             .wrapper {
               width: 100%;
@@ -94,7 +246,11 @@ document.addEventListener('DOMContentLoaded', () => {
               padding: 0 32px 32px 32px;
               font-size: 16px;
               line-height: 1.6;
-              color: #374151;
+            }
+            .content img {
+              max-width: 100%;
+              height: auto;
+              border-radius: 8px;
             }
             .footer {
               background: #f9fafb;
@@ -103,10 +259,8 @@ document.addEventListener('DOMContentLoaded', () => {
               text-align: center;
               color: #6b7280;
             }
-            img {
-              max-width: 100%;
-              height: auto;
-              border-radius: 6px;
+            a {
+              color: #2563eb;
             }
             @media (max-width: 600px) {
               h1 {
@@ -123,19 +277,16 @@ document.addEventListener('DOMContentLoaded', () => {
         <body>
           <div class="wrapper">
             <div style="display:none;font-size:1px;color:#f6f6f6;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">
-              ${previewText}
+              ${previewText || ''}
             </div>
             <div class="container">
               <h1>${title}</h1>
-              <div class="content">${content}</div>
+              <div class="content">
+                ${content}
+              </div>
               <div class="footer">
-                <p style="margin:0;">You are receiving this email because you subscribed to our newsletter.</p>
-                <p style="margin:8px 0 0 0;">If this was a mistake you can ignore this message or unsubscribe.</p>
-                ${
-                  unsubscribeLink
-                    ? `<p style="margin:12px 0 0 0;"><a href="${unsubscribeLink}" style="color:#2563eb;">Unsubscribe from this list</a></p>`
-                    : ''
-                }
+                You are receiving this email because you subscribed to our newsletter.<br />
+                <a href="${unsubscribeLink}">Unsubscribe</a>
               </div>
             </div>
           </div>
@@ -144,129 +295,480 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
   }
 
-  /**
-   * Update the preview iframe using the current editor state.
-   */
-  function renderPreview() {
-    const title = titleInput.value.trim() || 'Your Newsletter Title';
-    const rawContent = editor.innerHTML || '<p>Start writing your content...</p>';
-    const sanitizedContent = sanitizeEditorHtml(rawContent);
-    const previewText = previewTextInput.value.trim() || 'Thank you for reading our newsletter!';
-    const previewUnsubscribeLink = `${window.location.origin}/unsubscribe?email={{EMAIL}}`;
-    const html = buildEmailTemplate(title, sanitizedContent, previewText, previewUnsubscribeLink);
-    previewFrame.srcdoc = html;
-    setSendStatus('Preview updated.', false);
-  }
-
-  /**
-   * Fetch and render subscribers on load.
-   */
-  async function loadSubscribers() {
-    try {
-      const response = await fetch('/api/subscribers');
-      if (!response.ok) {
-        throw new Error('Failed to fetch subscribers.');
-      }
-      const data = await response.json();
-      renderSubscribers(data.subscribers || []);
-    } catch (error) {
-      console.error(error);
-      setSubscriberStatus('Could not load subscribers.', true);
-    }
-  }
-
-  /**
-   * Render subscribers into the list using the document template.
-   */
-  function renderSubscribers(subscribers) {
-    subscriberList.innerHTML = '';
-
-    if (!subscribers.length) {
-      const empty = document.createElement('li');
-      empty.textContent = 'No subscribers yet.';
-      empty.style.color = '#6b7280';
-      subscriberList.appendChild(empty);
+  function showPreviewModal() {
+    if (!previewModal) {
       return;
     }
-
-    subscribers.forEach((subscriber) => {
-      const item = subscriberTemplate.content.cloneNode(true);
-      const emailSpan = item.querySelector('.subscriber-email');
-      const removeButton = item.querySelector('.remove-subscriber');
-
-      emailSpan.textContent = subscriber.email;
-      removeButton.dataset.email = subscriber.email;
-
-      subscriberList.appendChild(item);
-    });
+    previewModal.classList.remove('hidden');
+    document.body.classList.add('modal-open');
+    setTimeout(() => {
+      previewClose?.focus({ preventScroll: true });
+    }, 50);
   }
 
-  /**
-   * Upload image to the server and insert into the editor.
-   */
-  async function uploadImage(file) {
-    const formData = new FormData();
-    formData.append('image', file);
-
-    setSendStatus('Uploading image...');
-
-    try {
-      const response = await fetch('/api/upload-image', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data?.message || 'Upload failed.');
-      }
-
-      document.execCommand('insertImage', false, data.imageUrl);
-      setSendStatus('Image uploaded and added to the editor.');
-    } catch (error) {
-      console.error(error);
-      setSendStatus(error.message || 'Could not upload the image.', true);
+  function hidePreviewModal() {
+    if (!previewModal) {
+      return;
     }
+    previewModal.classList.add('hidden');
+    document.body.classList.remove('modal-open');
+    previewButton?.focus({ preventScroll: true });
   }
 
-  // Toolbar controls using document.execCommand for simple rich text functionality.
+  // Compose interactions -------------------------------------------------------
+  if (previewTextInput) {
+    previewTextInput.addEventListener('input', () => {
+      if (previewTextInput.value.length > PREVIEW_MAX_LENGTH) {
+        previewTextInput.value = previewTextInput.value.slice(0, PREVIEW_MAX_LENGTH);
+      }
+      updatePreviewCounter();
+    });
+    updatePreviewCounter();
+  }
+
   toolbarButtons.forEach((button) => {
     button.addEventListener('click', () => {
       const command = button.dataset.command;
+      if (!command) {
+        return;
+      }
+
       if (command === 'createLink') {
-        const url = window.prompt('Enter the link URL:');
-        if (!url) {
-          return;
+        const url = window.prompt('Enter a URL');
+        if (url) {
+          document.execCommand(command, false, url);
         }
-        document.execCommand(command, false, url);
       } else {
         document.execCommand(command, false, null);
       }
-      editor.focus();
+
+      editor?.focus();
     });
   });
 
-  uploadTrigger.addEventListener('click', () => uploadInput.click());
+  if (uploadTrigger && uploadInput) {
+    uploadTrigger.addEventListener('click', () => uploadInput.click());
 
-  uploadInput.addEventListener('change', () => {
-    const [file] = uploadInput.files;
-    if (!file) {
-      return;
+    uploadInput.addEventListener('change', async () => {
+      const [file] = uploadInput.files || [];
+      if (!file) {
+        return;
+      }
+
+      if (!file.type.startsWith('image/')) {
+        setInlineStatus(imageUploadStatus, 'Please select an image file.', true);
+        uploadInput.value = '';
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('image', file);
+
+      setInlineStatus(imageUploadStatus, 'Uploading image…');
+      setButtonLoading(uploadTrigger, true, 'Uploading…');
+
+      try {
+        const response = await fetch('/api/upload-image', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (handleUnauthorizedResponse(response)) {
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error('Upload failed.');
+        }
+
+        const result = await response.json();
+        if (!result?.imageUrl) {
+          throw new Error('Upload failed.');
+        }
+
+        document.execCommand(
+          'insertHTML',
+          false,
+          `<img src="${result.imageUrl}" alt="Newsletter image" />`,
+        );
+        setInlineStatus(imageUploadStatus, 'Image added to the editor.');
+      } catch (error) {
+        console.error(error);
+        setInlineStatus(imageUploadStatus, 'Could not upload image.', true);
+      } finally {
+        setButtonLoading(uploadTrigger, false);
+        uploadInput.value = '';
+      }
+    });
+  }
+
+  function renderPreview(showModal = true) {
+    const title = titleInput.value.trim();
+    const rawContent = editor.innerHTML.trim();
+    const content = sanitizeEditorHtml(rawContent);
+    const previewText = previewTextInput.value.trim();
+
+    if (!title || !content) {
+      setSendStatus('Title and content are required for preview.', true);
+      return false;
     }
-    uploadImage(file);
-    uploadInput.value = ''; // Reset input so the same file can be uploaded twice if needed
+
+    if (previewFrame) {
+      previewFrame.srcdoc = buildEmailTemplate(title, content, previewText);
+    }
+    if (showModal) {
+      showPreviewModal();
+    }
+    return true;
+  }
+
+  previewButton?.addEventListener('click', () => {
+    renderPreview(true);
   });
 
-  // Add new subscriber via API.
-  addSubscriberForm.addEventListener('submit', async (event) => {
+  previewClose?.addEventListener('click', hidePreviewModal);
+  modalBackdrop?.addEventListener('click', hidePreviewModal);
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !previewModal.classList.contains('hidden')) {
+      hidePreviewModal();
+    }
+  });
+
+  function loadDraft() {
+    try {
+      const rawDraft = localStorage.getItem(DRAFT_STORAGE_KEY);
+      if (!rawDraft) {
+        return;
+      }
+      const draft = JSON.parse(rawDraft);
+      if (draft?.title) {
+        titleInput.value = draft.title;
+      }
+      if (typeof draft?.previewText === 'string') {
+        previewTextInput.value = draft.previewText;
+        updatePreviewCounter();
+      }
+      if (typeof draft?.content === 'string') {
+        editor.innerHTML = draft.content;
+      }
+      setSendStatus('Draft restored from your last session.');
+    } catch (error) {
+      console.warn('Failed to load draft.', error);
+    }
+  }
+
+  function saveDraft() {
+    const draft = {
+      title: titleInput.value,
+      previewText: previewTextInput.value,
+      content: editor.innerHTML,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+      setSendStatus('Draft saved locally.');
+    } catch (error) {
+      console.warn('Failed to save draft.', error);
+      setSendStatus('Could not save draft locally.', true);
+    }
+  }
+
+  saveDraftButton?.addEventListener('click', () => {
+    saveDraft();
+  });
+
+  sendButton?.addEventListener('click', async () => {
+    const title = titleInput.value.trim();
+    const rawContent = editor.innerHTML.trim();
+    const content = sanitizeEditorHtml(rawContent);
+    const previewText = previewTextInput.value.trim();
+
+    if (!title || !content) {
+      setSendStatus('Title and content are required.', true);
+      return;
+    }
+
+    setSendStatus('Sending newsletter...');
+    setButtonLoading(sendButton, true, 'Sending…');
+
+    try {
+      const response = await fetch('/api/send-newsletter', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title,
+          content,
+          previewText,
+        }),
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        const detailText = result?.details ? ` (${result.details})` : '';
+        throw new Error((result?.message || 'Failed to send newsletter.') + detailText);
+      }
+
+      const summary = result?.summary;
+      if (summary) {
+        const sent = summary.sentCount ?? summary.successes?.length ?? 0;
+        const failed = summary.failedCount ?? summary.failures?.length ?? 0;
+        const partialNote = failed > 0 ? ` (with ${failed} issues)` : '';
+        setSendStatus(`Newsletter sent successfully to ${sent} subscriber(s)${partialNote}.`);
+      } else {
+        setSendStatus('Newsletter sent successfully!');
+      }
+    } catch (error) {
+      console.error(error);
+      setSendStatus(error.message || 'Could not send newsletter.', true);
+    } finally {
+      setButtonLoading(sendButton, false);
+    }
+  });
+
+  // Subscribers ----------------------------------------------------------------
+  function normalizeEmail(value) {
+    return typeof value === 'string' ? value.trim().toLowerCase() : '';
+  }
+
+  function getSubscribedDate(subscriber) {
+    return (
+      subscriber?.subscribedAt ||
+      subscriber?.joinedAt ||
+      subscriber?.joined_at ||
+      subscriber?.createdAt ||
+      null
+    );
+  }
+
+  function formatDate(value) {
+    if (!value) {
+      return '—';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '—';
+    }
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    }).format(date);
+  }
+
+  function formatSource(value) {
+    if (!value) {
+      return 'Unknown';
+    }
+    const lower = value.toLowerCase();
+    if (SOURCE_LABELS[lower]) {
+      return SOURCE_LABELS[lower];
+    }
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  }
+
+  function matchesFilter(subscriber, filter) {
+    if (!filter || filter === 'all') {
+      return true;
+    }
+    const subscribedDate = getSubscribedDate(subscriber);
+    const dateValue = subscribedDate ? new Date(subscribedDate) : null;
+    const now = new Date();
+
+    switch (filter) {
+      case 'recent-7':
+        if (!dateValue) return false;
+        return now - dateValue <= 7 * 24 * 60 * 60 * 1000;
+      case 'recent-30':
+        if (!dateValue) return false;
+        return now - dateValue <= 30 * 24 * 60 * 60 * 1000;
+      case 'source-manual':
+        return normalizeEmail(subscriber.source) === 'manual';
+      case 'source-public-api':
+        return ['public-api', 'public-form', 'public'].includes(
+          normalizeEmail(subscriber.source),
+        );
+      case 'source-other':
+        return !['manual', 'public-api', 'public-form', 'public'].includes(
+          normalizeEmail(subscriber.source),
+        );
+      default:
+        return true;
+    }
+  }
+
+  function applySubscriberFilters() {
+    if (!subscriberSearch || !subscriberFilter || !subscriberTableBody) {
+      return;
+    }
+    const query = subscriberSearch.value.trim().toLowerCase();
+    const filterValue = subscriberFilter.value;
+
+    filteredSubscribers = subscribersCache.filter((subscriber) => {
+      const matchesSearch =
+        !query ||
+        normalizeEmail(subscriber.email).includes(query) ||
+        (subscriber.name || '').toLowerCase().includes(query);
+      const matches = matchesSearch && matchesFilter(subscriber, filterValue);
+      return matches;
+    });
+
+    currentSubscriberPage = 1;
+    renderSubscribers();
+  }
+
+  function renderSubscribers() {
+    if (!subscriberTableBody || !subscriberCount || !subscriberEmptyState) {
+      return;
+    }
+    subscriberCount.textContent = subscribersCache.length;
+
+    const totalItems = filteredSubscribers.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / SUBSCRIBER_PAGE_SIZE));
+    currentSubscriberPage = Math.min(currentSubscriberPage, totalPages);
+
+    const startIndex = (currentSubscriberPage - 1) * SUBSCRIBER_PAGE_SIZE;
+    const currentItems = filteredSubscribers.slice(
+      startIndex,
+      startIndex + SUBSCRIBER_PAGE_SIZE,
+    );
+
+    subscriberTableBody.innerHTML = '';
+
+    if (currentItems.length === 0) {
+      subscriberEmptyState.hidden = false;
+    } else {
+      subscriberEmptyState.hidden = true;
+      const fragment = document.createDocumentFragment();
+      currentItems.forEach((subscriber) => {
+        const row = subscriberRowTemplate.content.cloneNode(true);
+        const emailCell = row.querySelector('.subscriber-email');
+        const nameCell = row.querySelector('.subscriber-name');
+        const dateCell = row.querySelector('.subscriber-date');
+        const sourceCell = row.querySelector('.subscriber-source');
+        const removeButton = row.querySelector('.remove-subscriber');
+
+        emailCell.textContent = subscriber.email || 'Unknown';
+        nameCell.textContent = subscriber.name || '—';
+        dateCell.textContent = formatDate(getSubscribedDate(subscriber));
+        sourceCell.textContent = formatSource(subscriber.source);
+
+        if (removeButton) {
+          removeButton.dataset.email = subscriber.email;
+        }
+
+        fragment.appendChild(row);
+      });
+      subscriberTableBody.appendChild(fragment);
+    }
+
+    if (subscriberPrev && subscriberNext) {
+      subscriberPrev.disabled = currentSubscriberPage <= 1 || totalItems === 0;
+      subscriberNext.disabled =
+        currentSubscriberPage >= totalPages || totalItems === 0;
+    }
+
+    if (subscriberPageInfo) {
+      subscriberPageInfo.textContent =
+        totalItems === 0
+          ? 'Page 0 of 0'
+          : `Page ${currentSubscriberPage} of ${totalPages}`;
+    }
+  }
+
+  async function loadSubscribers() {
+    setSubscriberLoading(true);
+    setSubscriberStatus('');
+    try {
+      const response = await fetch('/api/subscribers');
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+      if (!response.ok) {
+        throw new Error('Failed to load subscribers.');
+      }
+      const data = await response.json();
+      subscribersCache = Array.isArray(data?.subscribers) ? data.subscribers.slice() : [];
+      subscribersCache.sort((a, b) => {
+        const dateA = new Date(getSubscribedDate(a) || 0).getTime();
+        const dateB = new Date(getSubscribedDate(b) || 0).getTime();
+        return dateB - dateA;
+      });
+      applySubscriberFilters();
+    } catch (error) {
+      console.error(error);
+      setSubscriberStatus(error.message || 'Could not load subscribers.', true);
+    } finally {
+      setSubscriberLoading(false);
+    }
+  }
+
+  subscriberPrev?.addEventListener('click', () => {
+    if (currentSubscriberPage > 1) {
+      currentSubscriberPage -= 1;
+      renderSubscribers();
+    }
+  });
+
+  subscriberNext?.addEventListener('click', () => {
+    const totalPages = Math.max(1, Math.ceil(filteredSubscribers.length / SUBSCRIBER_PAGE_SIZE));
+    if (currentSubscriberPage < totalPages) {
+      currentSubscriberPage += 1;
+      renderSubscribers();
+    }
+  });
+
+  subscriberSearch?.addEventListener('input', () => {
+    window.clearTimeout(searchDebounceTimeout);
+    searchDebounceTimeout = window.setTimeout(applySubscriberFilters, 200);
+  });
+
+  subscriberFilter?.addEventListener('change', applySubscriberFilters);
+
+  function toggleAddSubscriberForm(forceOpen) {
+    if (!toggleAddSubscriberButton || !addSubscriberForm) {
+      return;
+    }
+    const shouldOpen =
+      forceOpen ?? addSubscriberForm.classList.contains('hidden');
+    addSubscriberForm.classList.toggle('hidden', !shouldOpen);
+    toggleAddSubscriberButton.setAttribute('aria-expanded', String(shouldOpen));
+    if (shouldOpen) {
+      toggleAddSubscriberButton.innerHTML =
+        '<span class="icon" aria-hidden="true">✖️</span><span>Close form</span>';
+      subscriberEmailInput?.focus({ preventScroll: true });
+    } else {
+      toggleAddSubscriberButton.innerHTML =
+        toggleAddSubscriberButton.dataset.defaultContent ||
+        toggleAddSubscriberButton.innerHTML;
+      addSubscriberForm.reset();
+    }
+  }
+
+  toggleAddSubscriberButton?.addEventListener('click', () => toggleAddSubscriberForm());
+  cancelAddSubscriberButton?.addEventListener('click', () => toggleAddSubscriberForm(false));
+
+  addSubscriberForm?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const email = subscriberEmailInput.value.trim();
+    const name = subscriberNameInput.value.trim();
 
     if (!email) {
       setSubscriberStatus('Please enter an email address.', true);
+      subscriberEmailInput.focus();
       return;
     }
+
+    const submitButton = addSubscriberForm.querySelector('button[type="submit"]');
+    setSubscriberStatus('Adding subscriber...');
+    setButtonLoading(submitButton, true, 'Adding…');
 
     try {
       const response = await fetch('/api/subscribers', {
@@ -274,47 +776,61 @@ document.addEventListener('DOMContentLoaded', () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, ...(name ? { name } : {}) }),
       });
 
-      if (response.status === 409) {
-        setSubscriberStatus('This email is already subscribed.', true);
+      if (handleUnauthorizedResponse(response)) {
         return;
+      }
+
+      if (response.status === 409) {
+        throw new Error('This email is already subscribed.');
       }
 
       if (!response.ok) {
         throw new Error('Failed to add subscriber.');
       }
 
-      subscriberEmailInput.value = '';
       setSubscriberStatus('Subscriber added successfully.');
+      toggleAddSubscriberForm(false);
       await loadSubscribers();
     } catch (error) {
       console.error(error);
-      setSubscriberStatus('Could not add subscriber.', true);
+      setSubscriberStatus(error.message || 'Could not add subscriber.', true);
+    } finally {
+      setButtonLoading(submitButton, false);
     }
   });
 
-  // Handle subscriber removal using event delegation.
-  subscriberList.addEventListener('click', async (event) => {
-    if (!event.target.matches('.remove-subscriber')) {
+  subscriberTableBody?.addEventListener('click', async (event) => {
+    const target = event.target.closest('.remove-subscriber');
+    if (!target) {
+      return;
+    }
+    const email = target.dataset.email;
+    if (!email) {
       return;
     }
 
-    const email = event.target.dataset.email;
     const confirmed = window.confirm(`Remove ${email} from the list?`);
     if (!confirmed) {
       return;
     }
+
+    setSubscriberStatus(`Removing ${email}...`);
+    setButtonLoading(target, true, 'Removing…');
 
     try {
       const response = await fetch(`/api/subscribers/${encodeURIComponent(email)}`, {
         method: 'DELETE',
       });
 
-      if (response.status === 404) {
-        setSubscriberStatus('Subscriber not found.', true);
+      if (handleUnauthorizedResponse(response)) {
         return;
+      }
+
+      if (response.status === 404) {
+        throw new Error('Subscriber not found.');
       }
 
       if (!response.ok) {
@@ -325,60 +841,47 @@ document.addEventListener('DOMContentLoaded', () => {
       await loadSubscribers();
     } catch (error) {
       console.error(error);
-      setSubscriberStatus('Could not remove subscriber.', true);
-    }
-  });
-
-  // Preview the email in the iframe.
-  previewButton.addEventListener('click', () => {
-    renderPreview();
-  });
-
-  // Send newsletter via backend API.
-  sendButton.addEventListener('click', async () => {
-    const title = titleInput.value.trim();
-    const rawContent = editor.innerHTML.trim();
-    const sanitizedContent = sanitizeEditorHtml(rawContent);
-    const previewText = previewTextInput.value.trim();
-
-    if (!title || !sanitizedContent) {
-      setSendStatus('Title and content are required.', true);
-      return;
-    }
-
-    setSendStatus('Sending newsletter...');
-    sendButton.disabled = true;
-
-    try {
-      const response = await fetch('/api/send-newsletter', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title,
-          content: sanitizedContent,
-          previewText,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        const detailText = result?.details ? ` (${result.details})` : '';
-        throw new Error((result.message || 'Failed to send newsletter.') + detailText);
-      }
-
-      setSendStatus('Newsletter sent successfully!');
-    } catch (error) {
-      console.error(error);
-      setSendStatus(error.message || 'Could not send newsletter.', true);
+      setSubscriberStatus(error.message || 'Could not remove subscriber.', true);
     } finally {
-      sendButton.disabled = false;
+      setButtonLoading(target, false);
     }
   });
 
-  // Initialize view.
-  previewFrame.srcdoc = '<p style="font-family: Arial, sans-serif; padding: 16px;">Click "Preview Email" to see the formatted email.</p>';
-  loadSubscribers();
+  if (logoutButton) {
+    logoutButton.addEventListener('click', async () => {
+      setButtonLoading(logoutButton, true, 'Logging out…');
+      try {
+        const response = await fetch('/logout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: '{}',
+        });
+
+        if (response.ok) {
+          const result = await response.json().catch(() => ({}));
+          const redirectUrl =
+            typeof result?.redirect === 'string' ? result.redirect : '/login?loggedOut=1';
+          window.location.href = redirectUrl;
+          return;
+        }
+      } catch (error) {
+        console.error(error);
+      }
+      window.location.href = '/login';
+    });
+  }
+
+  // Initialization -------------------------------------------------------------
+  if (previewFrame && !previewFrame.srcdoc) {
+    previewFrame.srcdoc =
+      '<p style="font-family: Arial, sans-serif; padding: 16px;">Click "Preview email" to see the formatted newsletter.</p>';
+  }
+
+  loadDraft();
+  if (subscriberRowTemplate && subscriberTableBody) {
+    loadSubscribers();
+  }
+  activateView('compose-view');
 });

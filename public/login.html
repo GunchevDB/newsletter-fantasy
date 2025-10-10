@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Newsletter Admin Login</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      body.auth-body {
+        min-height: 100vh;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at top, rgba(37, 99, 235, 0.15), transparent 45%),
+          radial-gradient(circle at bottom, rgba(79, 70, 229, 0.12), transparent 40%),
+          #eef2ff;
+      }
+
+      .auth-wrapper {
+        width: min(420px, 92vw);
+        margin: 40px auto;
+      }
+
+      .auth-card {
+        background: #ffffff;
+        border-radius: 18px;
+        box-shadow: 0 35px 75px rgba(15, 23, 42, 0.22);
+        padding: clamp(32px, 5vw, 48px);
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+
+      .auth-card header h1 {
+        margin: 0 0 8px;
+        font-size: clamp(1.6rem, 2.8vw, 2rem);
+        color: #0f172a;
+      }
+
+      .auth-card header p {
+        margin: 0;
+        color: #475569;
+        line-height: 1.6;
+      }
+
+      .auth-form {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      .auth-field {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .auth-field label {
+        font-weight: 600;
+        color: #0f172a;
+      }
+
+      .auth-field input {
+        padding: 14px 16px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.5);
+        background: #f8fafc;
+        font-size: 1rem;
+        transition: border 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .auth-field input:focus {
+        outline: none;
+        border-color: rgba(37, 99, 235, 0.7);
+        box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.18);
+        background: #ffffff;
+      }
+
+      .auth-remember {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        color: #1f2937;
+        font-size: 0.95rem;
+      }
+
+      .auth-remember label {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .auth-remember input[type='checkbox'] {
+        width: 18px;
+        height: 18px;
+        accent-color: #2563eb;
+      }
+
+      .auth-submit {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        padding: 14px;
+        border-radius: 12px;
+        border: none;
+        background: linear-gradient(135deg, #2563eb, #4338ca);
+        color: #ffffff;
+        font-weight: 600;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      .auth-submit:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 18px 32px rgba(79, 70, 229, 0.25);
+      }
+
+      .auth-alert {
+        border-radius: 12px;
+        padding: 14px 16px;
+        font-weight: 600;
+        font-size: 0.95rem;
+      }
+
+      .auth-alert--error {
+        background: rgba(248, 113, 113, 0.15);
+        color: #b91c1c;
+        border: 1px solid rgba(248, 113, 113, 0.35);
+      }
+
+      .auth-alert--success {
+        background: rgba(34, 197, 94, 0.16);
+        color: #15803d;
+        border: 1px solid rgba(34, 197, 94, 0.35);
+      }
+
+      .auth-alert--info {
+        background: rgba(37, 99, 235, 0.12);
+        color: #1d4ed8;
+        border: 1px solid rgba(37, 99, 235, 0.3);
+      }
+
+      .auth-hint {
+        margin: 0;
+        color: #64748b;
+        font-size: 0.9rem;
+        text-align: center;
+      }
+
+      @media (max-width: 560px) {
+        .auth-card {
+          border-radius: 0;
+          box-shadow: none;
+          min-height: 100vh;
+          justify-content: center;
+        }
+        .auth-hint {
+          margin-top: -8px;
+        }
+      }
+    </style>
+  </head>
+  <body class="auth-body">
+    <main class="auth-wrapper">
+      <section class="auth-card" aria-labelledby="auth-title">
+        <header>
+          <h1 id="auth-title">Sign in to continue</h1>
+          <p>Use your admin credentials to access the newsletter editor and analytics tools.</p>
+        </header>
+        {{MESSAGE}}
+        <form method="POST" action="/login" class="auth-form" novalidate>
+          <input type="hidden" name="_csrf" value="{{CSRF_TOKEN}}" />
+          <input type="hidden" name="next" value="{{NEXT_VALUE}}" />
+          <div class="auth-field">
+            <label for="username">Username</label>
+            <input
+              id="username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              required
+              placeholder="admin"
+            />
+          </div>
+          <div class="auth-field">
+            <label for="password">Password</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+              placeholder="••••••••"
+            />
+          </div>
+          <div class="auth-remember">
+            <label for="remember">
+              <input id="remember" name="remember" type="checkbox" {{REMEMBER_CHECKED}} />
+              Remember me for 30 days
+            </label>
+          </div>
+          <button type="submit" class="auth-submit">Login</button>
+        </form>
+        <p class="auth-hint">
+          Set <code>ADMIN_USERNAME</code>, <code>ADMIN_PASSWORD</code>, and <code>SESSION_SECRET</code>
+          in your environment variables to control access.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>
+

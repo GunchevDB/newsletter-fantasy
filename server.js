@@ -6,9 +6,13 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const sanitizeHtml = require('sanitize-html');
+const session = require('express-session');
+const bcrypt = require('bcrypt');
+const csrf = require('csurf');
 const { Resend } = require('resend');
 const { v2: cloudinary } = require('cloudinary');
 const { performance } = require('perf_hooks');
@@ -89,6 +93,9 @@ const requiredEnvVars = [
   'CLOUDINARY_API_KEY',
   'CLOUDINARY_API_SECRET',
   'APP_URL',
+  'ADMIN_USERNAME',
+  'ADMIN_PASSWORD',
+  'SESSION_SECRET',
 ];
 
 const missingEnv = requiredEnvVars.filter((key) => !process.env[key]);
@@ -96,6 +103,34 @@ const missingEnv = requiredEnvVars.filter((key) => !process.env[key]);
 if (missingEnv.length) {
   logger.error(`Missing required environment variables: ${missingEnv.join(', ')}`);
   throw new Error('Environment not configured. Check your .env file.');
+}
+
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const SESSION_SECRET = process.env.SESSION_SECRET;
+const DEFAULT_SESSION_MAX_AGE = 24 * 60 * 60 * 1000;
+const REMEMBER_ME_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
+
+const adminPasswordLooksHashed = /^\$2[aby]\$/.test(ADMIN_PASSWORD || '');
+let adminPasswordHash;
+
+if (adminPasswordLooksHashed) {
+  adminPasswordHash = ADMIN_PASSWORD;
+} else {
+  const SALT_ROUNDS = 12;
+  adminPasswordHash = bcrypt.hashSync(ADMIN_PASSWORD, SALT_ROUNDS);
+  logger.warn(
+    'ADMIN_PASSWORD is not stored as a bcrypt hash. A hash has been generated at runtime; update your environment with the hashed value for best security.',
+  );
+}
+
+const loginTemplatePath = path.join(__dirname, 'public', 'login.html');
+let loginTemplate = '';
+try {
+  loginTemplate = fs.readFileSync(loginTemplatePath, 'utf8');
+} catch (error) {
+  logger.error('Failed to load login template.', { message: error?.message });
+  loginTemplate = '';
 }
 
 let resendStatus = {
@@ -269,6 +304,55 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function renderLoginPage({
+  csrfToken,
+  message,
+  messageType = 'info',
+  nextValue = '/',
+  rememberMe = false,
+} = {}) {
+  const safeMessage =
+    message && typeof message === 'string'
+      ? `<div class="auth-alert auth-alert--${messageType}">${escapeHtml(message)}</div>`
+      : '';
+  const safeNextValue = escapeHtml(nextValue || '/');
+  const rememberAttr = rememberMe ? 'checked' : '';
+
+  if (!loginTemplate) {
+    return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login</title>
+  </head>
+  <body>
+    ${safeMessage}
+    <form method="POST" action="/login">
+      <input type="hidden" name="_csrf" value="${escapeHtml(csrfToken || '')}" />
+      <input type="hidden" name="next" value="${safeNextValue}" />
+      <div>
+        <label>Username <input type="text" name="username" autocomplete="username" /></label>
+      </div>
+      <div>
+        <label>Password <input type="password" name="password" autocomplete="current-password" /></label>
+      </div>
+      <div>
+        <label><input type="checkbox" name="remember" ${rememberAttr} /> Remember me</label>
+      </div>
+      <button type="submit">Login</button>
+    </form>
+  </body>
+</html>`;
+  }
+
+  return loginTemplate
+    .replace(/{{CSRF_TOKEN}}/g, escapeHtml(csrfToken || ''))
+    .replace(/{{MESSAGE}}/g, safeMessage)
+    .replace(/{{NEXT_VALUE}}/g, safeNextValue)
+    .replace(/{{REMEMBER_CHECKED}}/g, rememberAttr);
 }
 
 function normalizeEmail(value) {
@@ -517,7 +601,87 @@ app.options('*', cors(corsConfig));
 
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
+
+const sessionConfig = {
+  name: 'newsletter.sid',
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: DEFAULT_SESSION_MAX_AGE,
+  },
+};
+
+app.use(session(sessionConfig));
+
+app.use((req, res, next) => {
+  if (req.session && req.session.isAuthenticated) {
+    const targetMaxAge = req.session.rememberMe ? REMEMBER_ME_MAX_AGE : DEFAULT_SESSION_MAX_AGE;
+    if (req.session.cookie.maxAge !== targetMaxAge) {
+      req.session.cookie.maxAge = targetMaxAge;
+    }
+  }
+  next();
+});
+
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+
+const csrfProtection = csrf();
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip,
+  handler: (req, res) => {
+    logger.warn('Login rate limit exceeded.', { ip: req.ip });
+    if (req.session) {
+      req.session.authFeedback = {
+        type: 'error',
+        text: 'Too many login attempts. Please try again in 15 minutes.',
+        statusCode: 429,
+      };
+    }
+    res.status(429).redirect('/login');
+  },
+});
+
+function getSafeRedirect(target) {
+  if (typeof target !== 'string' || target.length === 0) {
+    return '/';
+  }
+  if (!target.startsWith('/')) {
+    return '/';
+  }
+  if (target.startsWith('//')) {
+    return '/';
+  }
+  if (target.startsWith('/login') || target.startsWith('/logout')) {
+    return '/';
+  }
+  return target;
+}
+
+function ensureAuthenticatedView(req, res, next) {
+  if (req.session?.isAuthenticated) {
+    next();
+    return;
+  }
+  const redirectTarget = encodeURIComponent(req.originalUrl || '/');
+  res.redirect(`/login?next=${redirectTarget}`);
+}
+
+function ensureAuthenticatedApi(req, res, next) {
+  if (req.session?.isAuthenticated) {
+    next();
+    return;
+  }
+  res.status(401).json({ message: 'Authentication required.' });
+}
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -556,6 +720,124 @@ app.get('/health', (_, res) => {
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
   });
+});
+
+app.get('/login', csrfProtection, (req, res) => {
+  if (req.session?.isAuthenticated) {
+    const redirectTarget = getSafeRedirect(req.query.next);
+    res.redirect(redirectTarget);
+    return;
+  }
+
+  const feedback = req.session?.authFeedback || {};
+  if (req.session) {
+    delete req.session.authFeedback;
+  }
+
+  let message = feedback.text || '';
+  let messageType = feedback.type || 'info';
+  if (req.query.loggedOut === '1') {
+    message = 'Logged out successfully.';
+    messageType = 'success';
+  } else if (req.query.timeout === '1') {
+    message = 'Your session has expired. Please log in again.';
+    messageType = 'info';
+  }
+
+  const nextParam = typeof req.query.next === 'string' ? req.query.next : '/';
+  const html = renderLoginPage({
+    csrfToken: req.csrfToken(),
+    message,
+    messageType,
+    nextValue: getSafeRedirect(nextParam),
+    rememberMe: Boolean(feedback.remember),
+  });
+
+  res.status(feedback.statusCode || 200).send(html);
+});
+
+app.post('/login', loginLimiter, csrfProtection, async (req, res) => {
+  const { username, password, remember, next: nextParam } = req.body || {};
+  const nextPath = getSafeRedirect(nextParam);
+  const rememberMe = remember === 'on';
+
+  if (!username || !password) {
+    if (req.session) {
+      req.session.authFeedback = {
+        type: 'error',
+        text: 'Username and password are required.',
+        remember: rememberMe,
+      };
+    }
+    res.redirect(`/login?next=${encodeURIComponent(nextPath)}`);
+    return;
+  }
+
+  let passwordMatches = false;
+  try {
+    passwordMatches = await bcrypt.compare(password, adminPasswordHash);
+  } catch (error) {
+    logger.error('Bcrypt comparison failed during login.', {
+      message: error?.message,
+    });
+  }
+
+  if (username !== ADMIN_USERNAME || !passwordMatches) {
+    logger.warn('Authentication attempt failed.', {
+      ip: req.ip,
+      usernameAttempt: username,
+    });
+    recordSuspiciousAttempt(req.ip, 'invalid-login', { usernameAttempt: username });
+    if (req.session) {
+      req.session.authFeedback = {
+        type: 'error',
+        text: 'Invalid username or password.',
+        remember: rememberMe,
+      };
+    }
+    res.redirect(`/login?next=${encodeURIComponent(nextPath)}`);
+    return;
+  }
+
+  req.session.isAuthenticated = true;
+  req.session.username = ADMIN_USERNAME;
+  req.session.rememberMe = rememberMe;
+  req.session.loginAt = new Date().toISOString();
+  req.session.cookie.maxAge = rememberMe ? REMEMBER_ME_MAX_AGE : DEFAULT_SESSION_MAX_AGE;
+
+  logger.info('Authentication succeeded.', { ip: req.ip, username: ADMIN_USERNAME });
+
+  res.redirect(nextPath);
+});
+
+app.post('/logout', (req, res) => {
+  const username = req.session?.username;
+  logger.info('Logout requested.', { ip: req.ip, username });
+  const clearSessionAndRespond = () => {
+    res.clearCookie('newsletter.sid', {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    });
+    res.status(200).json({ redirect: '/login?loggedOut=1' });
+  };
+
+  if (req.session) {
+    req.session.destroy((error) => {
+      if (error) {
+        logger.error('Failed to destroy session on logout.', {
+          message: error?.message,
+        });
+      }
+      clearSessionAndRespond();
+    });
+  } else {
+    clearSessionAndRespond();
+  }
+});
+
+app.get('/', ensureAuthenticatedView, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 class SubscriberStorageError extends Error {
@@ -926,7 +1208,7 @@ function isValidEmail(value) {
 /**
  * GET subscribers list.
  */
-app.get('/api/subscribers', async (_, res) => {
+app.get('/api/subscribers', ensureAuthenticatedApi, async (_, res) => {
   try {
     const subscribers = await getSubscribers();
     res.json({ subscribers });
@@ -946,7 +1228,7 @@ app.get('/api/subscribers', async (_, res) => {
 /**
  * Add a new subscriber.
  */
-app.post('/api/subscribers', async (req, res) => {
+app.post('/api/subscribers', ensureAuthenticatedApi, async (req, res) => {
   const { email, name } = req.body;
 
   if (!email || !isValidEmail(email)) {
@@ -981,7 +1263,7 @@ app.post('/api/subscribers', async (req, res) => {
 /**
  * Remove an existing subscriber.
  */
-app.delete('/api/subscribers/:encodedEmail', async (req, res) => {
+app.delete('/api/subscribers/:encodedEmail', ensureAuthenticatedApi, async (req, res) => {
   const email = decodeURIComponent(req.params.encodedEmail);
   const normalizedTarget = extractEmailAddress(email);
 
@@ -1151,7 +1433,11 @@ app.get('/api/test-subscribe', (req, res) => {
 /**
  * Handle image uploads for the newsletter editor by streaming to Cloudinary.
  */
-app.post('/api/upload-image', upload.single('image'), async (req, res) => {
+app.post(
+  '/api/upload-image',
+  ensureAuthenticatedApi,
+  upload.single('image'),
+  async (req, res) => {
   if (!req.file) {
     res.status(400).json({ message: 'No image uploaded.' });
     return;
@@ -1181,13 +1467,14 @@ app.post('/api/upload-image', upload.single('image'), async (req, res) => {
       details: 'Cloud storage is temporarily unavailable.',
     });
   }
-});
+  },
+);
 
 /**
  * Send the newsletter to all subscribers.
  * Steps: sanitize content -> validate subscriber list -> send personalized emails sequentially with diagnostics.
  */
-app.post('/api/send-newsletter', async (req, res) => {
+app.post('/api/send-newsletter', ensureAuthenticatedApi, async (req, res) => {
   const { title, content, previewText } = req.body;
 
   if (!title || !content) {
@@ -1462,7 +1749,7 @@ app.post('/api/send-newsletter', async (req, res) => {
 /**
  * Send a single test email for diagnostics purposes.
  */
-app.post('/api/test-email', async (req, res) => {
+app.post('/api/test-email', ensureAuthenticatedApi, async (req, res) => {
   const { testEmail, includeImage, includImage } = req.body || {};
   const targetEmail = typeof testEmail === 'string' ? testEmail.trim() : '';
   const useImage = Boolean(includeImage ?? includImage ?? false);
@@ -1612,7 +1899,7 @@ app.post('/api/test-email', async (req, res) => {
 /**
  * Diagnostics endpoint for quick status checks.
  */
-app.get('/api/diagnostics', async (_, res) => {
+app.get('/api/diagnostics', ensureAuthenticatedApi, async (_, res) => {
   try {
     const subscribers = await getSubscribers();
     let cloudinaryStatus = {
@@ -1683,7 +1970,7 @@ app.get('/unsubscribe', (_, res) => {
 /**
  * Fallback route to serve index.html for any unknown routes (single-page feel).
  */
-app.get('*', (_, res) => {
+app.get('*', ensureAuthenticatedView, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 

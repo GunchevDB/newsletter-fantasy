@@ -50,12 +50,15 @@ README.md
    CLOUDINARY_API_KEY=your_cloudinary_api_key
    CLOUDINARY_API_SECRET=your_cloudinary_api_secret
    APP_URL=http://localhost:3000              # Update to your production URL when deployed
+   ADMIN_USERNAME=admin
+   ADMIN_PASSWORD=$2b$12$replace_with_bcrypt_hash
+   SESSION_SECRET=super_secret_session_key_change_me
    # Optional: Vercel KV credentials (falls back to in-memory storage if omitted)
    STORAGE_REST_API_URL=
    STORAGE_REST_API_TOKEN=
    STORAGE_URL=                               # Only needed for direct Redis connections
    ```
-   The server refuses to boot if anything is missing or if `SENDER_EMAIL` is malformed, so you catch configuration issues right away. When the storage variables are missing, the app logs that it is using in-memory storage (ideal for local development).
+   The server refuses to boot if anything is missing or if `SENDER_EMAIL` is malformed, so you catch configuration issues right away. For local development you may keep `ADMIN_PASSWORD` as plain text—the server hashes it at runtime—but in production you should store a bcrypt hash (see below). When the storage variables are missing, the app logs that it is using in-memory storage (ideal for local development).
 
 3. **Run locally**
    ```bash
@@ -63,14 +66,15 @@ README.md
    # or
    npm start     # plain node
    ```
-   Visit [http://localhost:3000](http://localhost:3000) to use the editor UI.
+   Visit [http://localhost:3000/login](http://localhost:3000/login) to authenticate with your admin credentials; after logging in you will be redirected to the editor dashboard.
 
 ## Using the App
-1. Add subscribers manually in the dashboard (or through the public API described below).
-2. Compose a campaign: write a title, optional preview text, format content, and upload images.
-3. Click **Preview Email** to see the responsive, inline-styled template with the unsubscribe link preview.
-4. Click **Send Newsletter** to deliver a personalized email (including a per-recipient unsubscribe link) to each subscriber. Detailed results are returned in the response and logged server-side.
-5. Use `/api/test-email` or `/api/diagnostics` whenever you need to verify deliverability or check external integrations (Resend/Cloudinary).
+1. Sign in at `/login` using the credentials defined by `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
+2. Add subscribers manually in the dashboard (or through the public API described below).
+3. Compose a campaign: write a title, optional preview text, format content, and upload images.
+4. Click **Preview Email** to see the responsive, inline-styled template with the unsubscribe link preview.
+5. Click **Send Newsletter** to deliver a personalized email (including a per-recipient unsubscribe link) to each subscriber. Detailed results are returned in the response and logged server-side.
+6. Use `/api/test-email` or `/api/diagnostics` whenever you need to verify deliverability or check external integrations (Resend/Cloudinary).
 
 ## Subscriber Storage
 
@@ -137,6 +141,17 @@ NODE
 
 Ensure `STORAGE_REST_API_URL` and `STORAGE_REST_API_TOKEN` are available in your environment before running the script.
 
+## Authentication & Sessions
+- The admin interface is protected by a password gate at `/login`. Credentials come from `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
+- Sessions are backed by `express-session` with a 24-hour idle timeout; selecting “Remember me” extends the cookie to 30 days.
+- Login attempts are rate limited (5 per 15 minutes per IP). When the limit is exceeded the form is locked temporarily and a warning is logged.
+- The login form is protected with a CSRF token; unauthenticated API calls respond with HTTP 401 so the client can redirect back to `/login`.
+- Passwords should be stored as bcrypt hashes in production. Generate one with `npx bcrypt-cli "your-strong-password"` (or any bcrypt tool) and place the resulting hash in `ADMIN_PASSWORD`.
+- `SESSION_SECRET` must be a long, random string. Rotate it whenever credentials change to invalidate all sessions.
+- For production, swap the default in-memory session store for something durable such as Redis (e.g., `connect-redis`). Redis also satisfies Vercel’s stateless requirements.
+- Need multiple admin users? Extend the auth middleware to load a hashed credential list from a secure data store (KV, Redis, or a managed secret) and compare via bcrypt.
+- Use `/logout` or the “Logout” button in the navigation to terminate the session. When a session expires naturally the app redirects back to `/login` and preserves the originally requested URL.
+
 ## Public Subscription API
 These endpoints are designed for external sites (e.g., your GoDaddy pages) and accept cross-origin requests.
 
@@ -196,13 +211,16 @@ Confirm these variables are set in your hosting platform:
 - `CLOUDINARY_API_KEY`
 - `CLOUDINARY_API_SECRET`
 - `APP_URL` (e.g., `https://newsletter.example.com`)
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD` (bcrypt hash recommended)
+- `SESSION_SECRET` (long, random string)
 - `STORAGE_REST_API_URL` (auto-provisioned when the Vercel KV integration is linked)
 - `STORAGE_REST_API_TOKEN` (auto-provisioned when the Vercel KV integration is linked)
 - `STORAGE_URL` (optional; only required for direct Redis connections)
 
 ### Vercel
 1. Create a new Vercel project from this repo.
-2. Set the environment variables (Project -> Settings -> Environment Variables). Once the KV integration is attached, Vercel adds the `STORAGE_*` values automatically.
+2. Set the environment variables (Project -> Settings -> Environment Variables). Provide `ADMIN_USERNAME`, a bcrypt-hashed `ADMIN_PASSWORD`, and a strong `SESSION_SECRET`. Once the KV integration is attached, Vercel adds the `STORAGE_*` values automatically.
 3. Use `npm install` as the build command and `npm start` as the run command.
 4. Redeploy and check:
    - `GET /health`
