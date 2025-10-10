@@ -1,0 +1,214 @@
+:root {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  color: #111827;
+  background: #f3f4f6;
+}
+
+body {
+  margin: 0;
+  background: #f3f4f6;
+}
+
+.app-header {
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  color: #ffffff;
+  text-align: center;
+  padding: 32px 16px;
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.25);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 32px;
+}
+
+.app-header p {
+  margin-top: 8px;
+  opacity: 0.9;
+}
+
+.layout {
+  display: grid;
+  gap: 24px;
+  padding: 24px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+section {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 15px 35px rgba(15, 23, 42, 0.12);
+}
+
+h2 {
+  margin-top: 0;
+  font-size: 22px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.field span {
+  font-weight: 600;
+  color: #374151;
+}
+
+input {
+  padding: 12px;
+  font-size: 16px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  transition: border-color 0.2s ease;
+}
+
+input:focus {
+  border-color: #2563eb;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.toolbar button {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f9fafb;
+  cursor: pointer;
+  transition: background 0.2s ease, border 0.2s ease;
+}
+
+.toolbar button:hover {
+  background: #e5e7eb;
+  border-color: #9ca3af;
+}
+
+.editor {
+  min-height: 240px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 16px;
+  background: #ffffff;
+  overflow-y: auto;
+}
+
+.editor:focus-visible {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.actions button {
+  flex: 1;
+  padding: 12px;
+  font-weight: 600;
+  border: 1px solid #2563eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #2563eb;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.actions button.primary,
+button.primary {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.actions button.primary:hover,
+button.primary:hover {
+  background: #1e3a8a;
+  border-color: #1e3a8a;
+}
+
+.actions button:hover {
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.preview-frame {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  min-height: 300px;
+  background: #f9fafb;
+  width: 100%;
+}
+
+.subscriber-list {
+  margin-top: 16px;
+}
+
+#subscriber-items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.subscriber-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f9fafb;
+  border-radius: 6px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+}
+
+.subscriber-item button {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #ef4444;
+  background: #fee2e2;
+  color: #b91c1c;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.subscriber-item button:hover {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+#send-status,
+#subscriber-status {
+  margin-top: 12px;
+  min-height: 20px;
+  color: #2563eb;
+}
+
+.inline-form {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.inline-form .field {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+@media (max-width: 768px) {
+  .actions {
+    flex-direction: column;
+  }
+}

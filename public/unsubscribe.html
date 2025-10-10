@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unsubscribe</title>
+    <style>
+      :root {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        color: #1f2937;
+        background: #f9fafb;
+      }
+
+      body {
+        margin: 0;
+        display: flex;
+        min-height: 100vh;
+        align-items: center;
+        justify-content: center;
+        background: #f3f4f6;
+      }
+
+      .card {
+        max-width: 440px;
+        width: 100%;
+        background: #ffffff;
+        border-radius: 16px;
+        padding: 32px;
+        box-shadow: 0 25px 50px -12px rgba(30, 64, 175, 0.25);
+      }
+
+      h1 {
+        margin-top: 0;
+        font-size: 24px;
+        color: #111827;
+      }
+
+      p {
+        line-height: 1.6;
+        margin-bottom: 16px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+      }
+
+      input[type='email'],
+      input[type='text'] {
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 8px;
+        border: 1px solid #d1d5db;
+        font-size: 16px;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      input[type='email']:focus {
+        outline: none;
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+      }
+
+      button {
+        width: 100%;
+        margin-top: 16px;
+        padding: 12px;
+        border: none;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 600;
+        background: linear-gradient(135deg, #2563eb, #4338ca);
+        color: #ffffff;
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      button[disabled] {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
+      button:not([disabled]):hover {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 20px rgba(67, 56, 202, 0.25);
+      }
+
+      .status {
+        min-height: 22px;
+        margin-top: 16px;
+        font-weight: 500;
+      }
+
+      .status.success {
+        color: #047857;
+      }
+
+      .status.error {
+        color: #b91c1c;
+      }
+
+      .note {
+        font-size: 14px;
+        color: #6b7280;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Unsubscribe</h1>
+      <p id="description">
+        Enter your email address to confirm that you’d like to stop receiving our newsletter. This action
+        cannot be undone automatically, but you can always resubscribe later.
+      </p>
+      <form id="unsubscribe-form">
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email" required />
+        <input id="honeypot" name="honeypot" type="text" autocomplete="off" tabindex="-1" style="position:absolute;left:-9999px;opacity:0;" />
+        <button type="submit">Confirm unsubscribe</button>
+        <p class="note">
+          If you didn't mean to unsubscribe, simply close this page and you'll remain subscribed.
+        </p>
+      </form>
+      <p id="status" class="status" role="status"></p>
+    </div>
+
+    <script>
+      const form = document.getElementById('unsubscribe-form');
+      const emailInput = document.getElementById('email');
+      const statusMessage = document.getElementById('status');
+      const description = document.getElementById('description');
+      const params = new URLSearchParams(window.location.search);
+      const emailParam = params.get('email');
+
+      if (emailParam) {
+        emailInput.value = decodeURIComponent(emailParam);
+        description.textContent = `Confirm that ${emailInput.value} should be removed from our newsletter.`;
+      }
+
+      function setStatus(message, type) {
+        statusMessage.textContent = message;
+        statusMessage.className = `status ${type || ''}`;
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        const email = emailInput.value.trim();
+        const honeypot = document.getElementById('honeypot').value;
+
+        if (!email) {
+          setStatus('Please enter your email address.', 'error');
+          return;
+        }
+
+        setStatus('Processing your request...', '');
+        form.querySelector('button').disabled = true;
+
+        try {
+          const response = await fetch('/api/public/unsubscribe', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email, honeypot }),
+          });
+
+          const result = await response.json();
+
+          if (result.success) {
+            setStatus(result.message || 'Successfully unsubscribed.', 'success');
+            form.reset();
+          } else {
+            setStatus(result.error || 'We could not process your request.', 'error');
+          }
+        } catch (error) {
+          console.error(error);
+          setStatus('Something went wrong. Please try again later.', 'error');
+        } finally {
+          form.querySelector('button').disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

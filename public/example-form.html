@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Newsletter Subscription Example</title>
+    <style>
+      :root {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color: #111827;
+        background: #f9fafb;
+      }
+
+      body {
+        margin: 0;
+        padding: 40px 16px;
+        display: flex;
+        justify-content: center;
+      }
+
+      .container {
+        max-width: 560px;
+        width: 100%;
+        background: #ffffff;
+        border-radius: 16px;
+        padding: 32px;
+        box-shadow: 0 20px 45px rgba(15, 23, 42, 0.15);
+      }
+
+      h1 {
+        margin-top: 0;
+        font-size: 28px;
+        color: #0f172a;
+      }
+
+      p {
+        line-height: 1.6;
+        color: #334155;
+      }
+
+      form {
+        margin-top: 24px;
+        display: grid;
+        gap: 16px;
+      }
+
+      label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+
+      input[type='text'],
+      input[type='email'] {
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 8px;
+        border: 1px solid #cbd5f5;
+        font-size: 16px;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      input[type='text']:focus,
+      input[type='email']:focus {
+        outline: none;
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+      }
+
+      .honeypot {
+        position: absolute;
+        left: -9999px;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      button {
+        padding: 12px 16px;
+        border: none;
+        border-radius: 999px;
+        font-size: 16px;
+        font-weight: 600;
+        background: linear-gradient(135deg, #2563eb, #4338ca);
+        color: #ffffff;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      button[disabled] {
+        opacity: 0.65;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
+      button:not([disabled]):hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 25px rgba(59, 130, 246, 0.35);
+      }
+
+      .status {
+        min-height: 24px;
+        font-weight: 600;
+      }
+
+      .status.success {
+        color: #047857;
+      }
+
+      .status.error {
+        color: #b91c1c;
+      }
+
+      code {
+        background: rgba(79, 70, 229, 0.1);
+        padding: 2px 4px;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Embed This Form Anywhere</h1>
+      <p>
+        This example shows how to call the public subscription API using <code>fetch</code>. Copy this file
+        to your website (e.g. GoDaddy builder) and update the <code>API_BASE</code> constant to point to
+        your deployed newsletter server.
+      </p>
+
+      <form id="subscribe-form" novalidate>
+        <div>
+          <label for="name">Your name (optional)</label>
+          <input id="name" name="name" type="text" placeholder="Alex Newsletter" autocomplete="name" />
+        </div>
+
+        <div>
+          <label for="email">Email address</label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="you@example.com"
+            autocomplete="email"
+            required
+          />
+        </div>
+
+        <!-- Honeypot field: bots often fill every input -->
+        <input
+          id="website"
+          name="honeypot"
+          type="text"
+          class="honeypot"
+          tabindex="-1"
+          autocomplete="off"
+        />
+
+        <button id="submit-button" type="submit">Subscribe</button>
+        <p id="status" class="status" role="status"></p>
+      </form>
+    </div>
+
+    <script>
+      // Replace this with your production API root, e.g. 'https://newsletter.example.com'
+      const API_BASE = window.location.origin;
+
+      const form = document.getElementById('subscribe-form');
+      const statusMessage = document.getElementById('status');
+      const submitButton = document.getElementById('submit-button');
+
+      function setStatus(message, type) {
+        statusMessage.textContent = message;
+        statusMessage.className = \`status \${type || ''}\`;
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        const formData = new FormData(form);
+        const payload = {
+          name: formData.get('name')?.trim() || undefined,
+          email: formData.get('email')?.trim(),
+          honeypot: formData.get('honeypot')?.trim(),
+        };
+
+        if (!payload.email) {
+          setStatus('Please enter a valid email address.', 'error');
+          return;
+        }
+
+        submitButton.disabled = true;
+        setStatus('Submitting your subscription...', '');
+
+        try {
+          const response = await fetch(\`\${API_BASE}/api/public/subscribe\`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          });
+
+          const result = await response.json();
+
+          if (result.success) {
+            setStatus(result.message || 'Successfully subscribed!', 'success');
+            form.reset();
+          } else {
+            setStatus(result.error || 'We could not subscribe you. Please try again.', 'error');
+          }
+        } catch (error) {
+          console.error(error);
+          setStatus('A network error occurred. Please try again later.', 'error');
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

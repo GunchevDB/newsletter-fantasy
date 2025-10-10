@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Simple Newsletter Builder</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Simple Newsletter Builder</h1>
+      <p>Create newsletters, manage subscribers, and send emails in minutes.</p>
+    </header>
+
+    <main class="layout">
+      <section class="composer">
+        <h2>Newsletter Composer</h2>
+        <label class="field">
+          <span>Title</span>
+          <input id="newsletter-title" type="text" placeholder="Your newsletter title" />
+        </label>
+
+        <label class="field">
+          <span>Preview text (optional)</span>
+          <input
+            id="newsletter-preview-text"
+            type="text"
+            placeholder="Short summary shown in inbox previews"
+          />
+        </label>
+
+        <div class="toolbar" role="toolbar">
+          <button data-command="bold" type="button"><strong>B</strong></button>
+          <button data-command="italic" type="button"><em>I</em></button>
+          <button data-command="createLink" type="button">Link</button>
+          <button data-command="insertUnorderedList" type="button">List</button>
+          <button id="upload-image-trigger" type="button">Image</button>
+          <input id="image-upload-input" type="file" accept="image/*" hidden />
+        </div>
+
+        <div
+          id="newsletter-content"
+          class="editor"
+          contenteditable="true"
+          aria-label="Newsletter content editor"
+        ></div>
+
+        <div class="actions">
+          <button id="preview-button" type="button">Preview Email</button>
+          <button id="send-button" type="button" class="primary">Send Newsletter</button>
+        </div>
+        <p id="send-status" role="status"></p>
+      </section>
+
+      <section class="preview">
+        <h2>Email Preview</h2>
+        <iframe
+          id="email-preview"
+          class="preview-frame"
+          title="Email preview"
+          sandbox="allow-same-origin"
+        ></iframe>
+      </section>
+
+      <section class="subscribers">
+        <h2>Subscriber Management</h2>
+        <form id="add-subscriber-form" class="inline-form">
+          <label class="field">
+            <span>Email address</span>
+            <input id="subscriber-email" type="email" placeholder="subscriber@example.com" />
+          </label>
+          <button type="submit" class="primary">Add Subscriber</button>
+        </form>
+
+        <p id="subscriber-status" role="status"></p>
+
+        <div class="subscriber-list">
+          <h3>Current Subscribers</h3>
+          <ul id="subscriber-items"></ul>
+        </div>
+      </section>
+    </main>
+
+    <template id="subscriber-item-template">
+      <li class="subscriber-item">
+        <span class="subscriber-email"></span>
+        <button class="remove-subscriber" type="button">Remove</button>
+      </li>
+    </template>
+
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" defer></script>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
