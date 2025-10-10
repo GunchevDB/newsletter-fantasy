@@ -55,7 +55,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   navTabs.forEach((tab) => {
     tab.addEventListener('click', () => {
-      activateView(tab.dataset.target);
+      const targetView = tab.dataset.target;
+      activateView(targetView);
+      if (targetView === 'subscribers-view') {
+        loadSubscribers({ silent: subscribersLoadedOnce }).catch(() => {});
+      }
       if (primaryNav.classList.contains('is-open')) {
         toggleNav(false);
       }
@@ -98,6 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const subscriberRowTemplate = document.getElementById('subscriber-row-template');
   const subscriberTableBody = document.getElementById('subscriber-table-body');
   const subscriberCount = document.getElementById('subscriber-total');
+  const storageModeBadge = document.getElementById('subscriber-storage-mode');
   const subscriberStatus = document.getElementById('subscriber-status');
   const subscriberSearch = document.getElementById('subscriber-search');
   const subscriberFilter = document.getElementById('subscriber-filter');
@@ -116,6 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let filteredSubscribers = [];
   let currentSubscriberPage = 1;
   let searchDebounceTimeout = null;
+  let subscribersLoadedOnce = false;
 
   if (toggleAddSubscriberButton) {
     toggleAddSubscriberButton.dataset.defaultContent = toggleAddSubscriberButton.innerHTML;
@@ -153,12 +159,21 @@ document.addEventListener('DOMContentLoaded', () => {
     element.classList.toggle('is-error', isError);
   }
 
-  function setSubscriberStatus(message, isError = false) {
+  function setSubscriberStatus(message, isError = false, options = {}) {
     if (!subscriberStatus) {
       return;
     }
     subscriberStatus.textContent = message;
-    subscriberStatus.classList.toggle('is-error', isError);
+    subscriberStatus.classList.remove('is-error', 'is-success');
+    if (!message) {
+      return;
+    }
+    const { highlightSuccess = false } = options;
+    if (isError) {
+      subscriberStatus.classList.add('is-error');
+    } else if (highlightSuccess) {
+      subscriberStatus.classList.add('is-success');
+    }
   }
 
   function redirectToLogin() {
@@ -683,28 +698,84 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  async function loadSubscribers() {
+  async function loadSubscribers(options = {}) {
+    const { silent = false } = options;
     setSubscriberLoading(true);
-    setSubscriberStatus('');
+    if (!silent) {
+      setSubscriberStatus('');
+    }
     try {
       const response = await fetch('/api/subscribers');
       if (handleUnauthorizedResponse(response)) {
-        return;
+        return false;
       }
       if (!response.ok) {
         throw new Error('Failed to load subscribers.');
       }
       const data = await response.json();
-      subscribersCache = Array.isArray(data?.subscribers) ? data.subscribers.slice() : [];
-      subscribersCache.sort((a, b) => {
+      const storageMode = data?.storage || 'unknown';
+      const storageHealthy =
+        storageMode === 'kv' ? Boolean(data?.kvConnectionHealthy) : true;
+      const list = Array.isArray(data?.subscribers) ? data.subscribers.slice() : [];
+      subscribersCache = list.sort((a, b) => {
         const dateA = new Date(getSubscribedDate(a) || 0).getTime();
         const dateB = new Date(getSubscribedDate(b) || 0).getTime();
         return dateB - dateA;
       });
       applySubscriberFilters();
+
+      const totalFromApi =
+        typeof data?.count === 'number' ? data.count : subscribersCache.length;
+
+      if (subscriberCount) {
+        subscriberCount.textContent = totalFromApi;
+      }
+
+      if (storageModeBadge) {
+        const backendLabel =
+          storageMode === 'kv'
+            ? storageHealthy
+              ? 'Storage: Vercel KV'
+              : 'Storage: Vercel KV (degraded)'
+            : 'Storage: In-memory';
+        storageModeBadge.textContent = backendLabel;
+        storageModeBadge.dataset.mode = storageMode;
+        storageModeBadge.dataset.healthy = storageHealthy ? 'true' : 'false';
+        storageModeBadge.classList.toggle(
+          'storage-pill--warning',
+          storageMode !== 'kv' || !storageHealthy,
+        );
+        storageModeBadge.title =
+          storageMode === 'kv'
+            ? storageHealthy
+              ? 'Connected to Vercel KV.'
+              : 'KV connection unhealthy. Check server logs.'
+            : 'In-memory storage resets when the server restarts.';
+      }
+
+      if (!silent) {
+        const backendLabel =
+          storageMode === 'kv'
+            ? storageHealthy
+              ? 'Vercel KV'
+              : 'Vercel KV (degraded)'
+            : 'in-memory';
+        const storageNote = storageMode === 'kv' ? '' : ' (non-persistent)';
+        setSubscriberStatus(
+          `Loaded ${totalFromApi} subscriber(s) from ${backendLabel} storage${storageNote}.`,
+          storageMode === 'kv' && !storageHealthy,
+          { highlightSuccess: storageMode === 'kv' && storageHealthy },
+        );
+      }
+
+      subscribersLoadedOnce = true;
+      return true;
     } catch (error) {
       console.error(error);
-      setSubscriberStatus(error.message || 'Could not load subscribers.', true);
+      if (!silent) {
+        setSubscriberStatus(error.message || 'Could not load subscribers.', true);
+      }
+      return false;
     } finally {
       setSubscriberLoading(false);
     }
@@ -783,17 +854,41 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
+      const result = await response.json().catch(() => ({}));
+
       if (response.status === 409) {
-        throw new Error('This email is already subscribed.');
+        throw new Error(result?.message || 'This email is already subscribed.');
       }
 
       if (!response.ok) {
-        throw new Error('Failed to add subscriber.');
+        throw new Error(result?.message || result?.error || 'Failed to add subscriber.');
       }
 
-      setSubscriberStatus('Subscriber added successfully.');
+      const storageMode = result?.storage || 'unknown';
+      const storageHealthy =
+        storageMode === 'kv' ? Boolean(result?.kvConnectionHealthy) : true;
+      const attempts = result?.verification?.attempts || 1;
+      const backendLabel =
+        storageMode === 'kv'
+          ? storageHealthy
+            ? 'Vercel KV'
+            : 'Vercel KV (degraded)'
+          : 'in-memory';
+
+      if (typeof result?.count === 'number' && subscriberCount) {
+        subscriberCount.textContent = result.count;
+      }
+
+      const nonPersistentNote = storageMode === 'kv' ? '' : ' (non-persistent)';
+      setSubscriberStatus(
+        `Subscriber saved to ${backendLabel} storage${nonPersistentNote} (verified in ${attempts} attempt${
+          attempts === 1 ? '' : 's'
+        }).`,
+        storageMode === 'kv' && !storageHealthy,
+        { highlightSuccess: storageMode === 'kv' && storageHealthy },
+      );
       toggleAddSubscriberForm(false);
-      await loadSubscribers();
+      await loadSubscribers({ silent: true });
     } catch (error) {
       console.error(error);
       setSubscriberStatus(error.message || 'Could not add subscriber.', true);
@@ -829,16 +924,40 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
+      const result = await response.json().catch(() => ({}));
+
       if (response.status === 404) {
-        throw new Error('Subscriber not found.');
+        throw new Error(result?.message || 'Subscriber not found.');
       }
 
       if (!response.ok) {
-        throw new Error('Failed to remove subscriber.');
+        throw new Error(result?.message || result?.error || 'Failed to remove subscriber.');
       }
 
-      setSubscriberStatus('Subscriber removed.');
-      await loadSubscribers();
+      const storageMode = result?.storage || 'unknown';
+      const storageHealthy =
+        storageMode === 'kv' ? Boolean(result?.kvConnectionHealthy) : true;
+      const attempts = result?.verification?.attempts || 1;
+      const backendLabel =
+        storageMode === 'kv'
+          ? storageHealthy
+            ? 'Vercel KV'
+            : 'Vercel KV (degraded)'
+          : 'in-memory';
+
+      if (typeof result?.count === 'number' && subscriberCount) {
+        subscriberCount.textContent = result.count;
+      }
+
+      const removalNote = storageMode === 'kv' ? '' : ' (non-persistent)';
+      setSubscriberStatus(
+        `Subscriber removed from ${backendLabel} storage${removalNote} (confirmed in ${attempts} attempt${
+          attempts === 1 ? '' : 's'
+        }).`,
+        storageMode === 'kv' && !storageHealthy,
+        { highlightSuccess: storageMode === 'kv' && storageHealthy },
+      );
+      await loadSubscribers({ silent: true });
     } catch (error) {
       console.error(error);
       setSubscriberStatus(error.message || 'Could not remove subscriber.', true);
@@ -881,7 +1000,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   loadDraft();
   if (subscriberRowTemplate && subscriberTableBody) {
-    loadSubscribers();
+    loadSubscribers().catch(() => {});
   }
   activateView('compose-view');
 });

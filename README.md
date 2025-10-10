@@ -29,7 +29,7 @@ README.md
 - [Node.js](https://nodejs.org/) (LTS recommended)
 - Resend API key with a verified sender address
 - Cloudinary account (free tier works great)
-- (Optional) Vercel KV database. On Vercel, the `STORAGE_*` environment variables are provisioned automatically when the KV integration is linked.
+- (Optional) Vercel KV database. On Vercel, the `KV_*` environment variables are provisioned automatically when the KV integration is linked.
 
 ## Setup
 
@@ -54,9 +54,9 @@ README.md
    ADMIN_PASSWORD=$2b$12$replace_with_bcrypt_hash
    SESSION_SECRET=super_secret_session_key_change_me
    # Optional: Vercel KV credentials (falls back to in-memory storage if omitted)
-   STORAGE_REST_API_URL=
-   STORAGE_REST_API_TOKEN=
-   STORAGE_URL=                               # Only needed for direct Redis connections
+   KV_REST_API_URL=
+   KV_REST_API_TOKEN=
+   KV_URL=                               # Only needed for direct Redis connections
    ```
    The server refuses to boot if anything is missing or if `SENDER_EMAIL` is malformed, so you catch configuration issues right away. For local development you may keep `ADMIN_PASSWORD` as plain text—the server hashes it at runtime—but in production you should store a bcrypt hash (see below). When the storage variables are missing, the app logs that it is using in-memory storage (ideal for local development).
 
@@ -79,12 +79,12 @@ README.md
 ## Subscriber Storage
 
 ### Local development
-- If the `STORAGE_*` variables are not present, the server automatically switches to an in-memory `Map`. Subscriber data resets whenever the process restarts, which keeps local testing simple.
-- To exercise Vercel KV locally (or from another environment), set `STORAGE_REST_API_URL` and `STORAGE_REST_API_TOKEN` in `.env`. You can copy these values from Vercel (Project -> Storage -> KV -> Tokens) or create a separate KV instance for local testing.
+- If the `KV_*` variables are not present, the server automatically switches to an in-memory `Map`. Subscriber data resets whenever the process restarts, which keeps local testing simple.
+- To exercise Vercel KV locally (or from another environment), set `KV_REST_API_URL` and `KV_REST_API_TOKEN` in `.env`. You can copy these values from Vercel (Project -> Storage -> KV -> Tokens) or create a separate KV instance for local testing.
 - When the server boots, check the console output. It logs whether it is using Vercel KV (REST API) or in-memory storage.
 
 ### Production on Vercel
-- Vercel attaches `STORAGE_URL`, `STORAGE_REST_API_URL`, and `STORAGE_REST_API_TOKEN` automatically when you add the KV integration to your project. No code changes are required.
+- Vercel attaches `KV_URL`, `KV_REST_API_URL`, and `KV_REST_API_TOKEN` automatically when you add the KV integration to your project. No code changes are required.
 - Ensure the Storage integration is linked to each environment (Production/Preview/Development) where you deploy. Redeploy after linking so the environment variables become available.
 
 ### Verifying Vercel KV
@@ -114,8 +114,8 @@ function normalizeEmail(value) {
   const file = path.join(__dirname, 'data', 'subscribers.json');
   const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
   const kv = createClient({
-    url: process.env.STORAGE_REST_API_URL,
-    token: process.env.STORAGE_REST_API_TOKEN,
+    url: process.env.KV_REST_API_URL,
+    token: process.env.KV_REST_API_TOKEN,
   });
 
   for (const subscriber of payload) {
@@ -139,7 +139,7 @@ function normalizeEmail(value) {
 NODE
 ```
 
-Ensure `STORAGE_REST_API_URL` and `STORAGE_REST_API_TOKEN` are available in your environment before running the script.
+Ensure `KV_REST_API_URL` and `KV_REST_API_TOKEN` are available in your environment before running the script.
 
 ## Authentication & Sessions
 - The admin interface is protected by a password gate at `/login`. Credentials come from `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
@@ -151,6 +151,13 @@ Ensure `STORAGE_REST_API_URL` and `STORAGE_REST_API_TOKEN` are available in your
 - For production, swap the default in-memory session store for something durable such as Redis (e.g., `connect-redis`). Redis also satisfies Vercel’s stateless requirements.
 - Need multiple admin users? Extend the auth middleware to load a hashed credential list from a secure data store (KV, Redis, or a managed secret) and compare via bcrypt.
 - Use `/logout` or the “Logout” button in the navigation to terminate the session. When a session expires naturally the app redirects back to `/login` and preserves the originally requested URL.
+
+## Storage Diagnostics
+- Call `GET /api/debug/storage` while authenticated to see the active storage backend, connection health, last subscriber operation, and the current subscriber list.
+- Watch the `[Subscribers]` log entries locally or in Vercel logs (`vercel logs <project-name> --since 1h` or Deployments ➝ Logs). Successful writes include the storage mode and updated counts.
+- After adding or removing a subscriber in the UI you should see a green “saved” message describing the storage backend and verification attempts. Refresh the page to confirm the subscriber list persists when Vercel KV is available.
+- If the app falls back to in-memory storage you will see warnings in the logs. On Vercel, double-check that `KV_REST_API_URL`, `KV_REST_API_TOKEN`, and `KV_URL` are configured for the active environment.
+- For deeper validation, open Vercel ➝ Storage ➝ KV ➝ Browser and look for hashes named `newsletter:subscriber:<email>` updating as you add or remove subscribers.
 
 ## Public Subscription API
 These endpoints are designed for external sites (e.g., your GoDaddy pages) and accept cross-origin requests.
@@ -214,13 +221,13 @@ Confirm these variables are set in your hosting platform:
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD` (bcrypt hash recommended)
 - `SESSION_SECRET` (long, random string)
-- `STORAGE_REST_API_URL` (auto-provisioned when the Vercel KV integration is linked)
-- `STORAGE_REST_API_TOKEN` (auto-provisioned when the Vercel KV integration is linked)
-- `STORAGE_URL` (optional; only required for direct Redis connections)
+- `KV_REST_API_URL` (auto-provisioned when the Vercel KV integration is linked)
+- `KV_REST_API_TOKEN` (auto-provisioned when the Vercel KV integration is linked)
+- `KV_URL` (optional; only required for direct Redis connections)
 
 ### Vercel
 1. Create a new Vercel project from this repo.
-2. Set the environment variables (Project -> Settings -> Environment Variables). Provide `ADMIN_USERNAME`, a bcrypt-hashed `ADMIN_PASSWORD`, and a strong `SESSION_SECRET`. Once the KV integration is attached, Vercel adds the `STORAGE_*` values automatically.
+2. Set the environment variables (Project -> Settings -> Environment Variables). Provide `ADMIN_USERNAME`, a bcrypt-hashed `ADMIN_PASSWORD`, and a strong `SESSION_SECRET`. Once the KV integration is attached, Vercel adds the `KV_*` values automatically.
 3. Use `npm install` as the build command and `npm start` as the run command.
 4. Redeploy and check:
    - `GET /health`
@@ -247,7 +254,7 @@ Confirm these variables are set in your hosting platform:
 - **Resend rejects the email** – Inspect the response for `statusCode`, `error`, and `suggestions`. Common causes: unverified sender, missing domain DNS (SPF/DKIM), or quota limits.
 - **Public API returns 429** – You hit the 10 requests/hour/IP rate limit; slow down or aggregate submissions.
 - **CORS blocked** – Confirm your frontend is sending `Content-Type: application/json` and that you are hitting the correct API base URL.
-- **Subscriber storage unavailable** – Ensure the `STORAGE_*` variables are present and correct. The server logs and `/api/diagnostics` response will call out connection issues.
+- **Subscriber storage unavailable** – Ensure the `KV_*` variables are present and correct. The server logs and `/api/diagnostics` response will call out connection issues.
 
 ## Server API Quick Reference
 - `GET /health`

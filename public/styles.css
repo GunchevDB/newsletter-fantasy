@@ -341,6 +341,10 @@ select:focus {
   color: #b91c1c;
 }
 
+.status-message.is-success {
+  color: #15803d;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -484,6 +488,26 @@ select:focus {
 .badge-label {
   font-size: 0.9rem;
   color: var(--color-muted);
+}
+
+.storage-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+}
+
+.storage-pill.storage-pill--warning {
+  background: rgba(248, 113, 113, 0.18);
+  color: #b91c1c;
+  border: 1px solid rgba(248, 113, 113, 0.35);
 }
 
 .subscriber-controls {
