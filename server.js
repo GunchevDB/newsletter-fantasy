@@ -6,7 +6,6 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs').promises;
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const sanitizeHtml = require('sanitize-html');
@@ -18,10 +17,8 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Resolve important paths once.
-const dataDir = path.join(__dirname, 'data');
-const subscribersPath = path.join(dataDir, 'subscribers.json');
+const SUBSCRIBERS_SET_KEY = 'newsletter:subscribers';
+const SUBSCRIBER_HASH_PREFIX = 'newsletter:subscriber:';
 
 /**
  * Tiny timestamped logger for consistent console output in production.
@@ -37,6 +34,49 @@ const logger = {
     console.error(`[${new Date().toISOString()}] [ERROR] ${message}`, ...args);
   },
 };
+
+const KV_ENV_VARS = ['STORAGE_REST_API_URL', 'STORAGE_REST_API_TOKEN'];
+const inMemorySubscribers = new Map();
+let kvClient = null;
+let kvInitializationError = null;
+let subscriberStoreMode = 'memory';
+
+(function initializeSubscriberStore() {
+  const missingKvEnv = KV_ENV_VARS.filter((key) => !process.env[key]);
+
+  if (missingKvEnv.length === 0) {
+    try {
+      const { createClient } = require('@vercel/kv');
+      kvClient = createClient({
+        url: process.env.STORAGE_REST_API_URL,
+        token: process.env.STORAGE_REST_API_TOKEN,
+      });
+      if (!kvClient) {
+        throw new Error('Vercel KV client not available.');
+      }
+      subscriberStoreMode = 'kv';
+      kvInitializationError = null;
+      logger.info('Subscriber storage configured to use Vercel KV (REST API).', {
+        restApiUrl: process.env.STORAGE_REST_API_URL,
+      });
+    } catch (error) {
+      kvInitializationError = error;
+      subscriberStoreMode = 'memory';
+      logger.error(
+        'Failed to initialize Vercel KV client. Falling back to in-memory subscriber storage.',
+        { message: error?.message },
+      );
+    }
+  } else {
+    logger.warn(
+      'Vercel KV environment not detected (set STORAGE_REST_API_URL and STORAGE_REST_API_TOKEN). Using in-memory subscriber storage.',
+    );
+  }
+
+  if (subscriberStoreMode === 'memory') {
+    logger.info('Subscriber storage is in-memory; data resets when the server restarts.');
+  }
+})();
 
 const requiredEnvVars = [
   'RESEND_API_KEY',
@@ -493,37 +533,211 @@ app.get('/health', (_, res) => {
   });
 });
 
-/**
- * Ensure data directory exists before interacting with the JSON file.
- */
-async function ensureDataDir() {
-  await fs.mkdir(dataDir, { recursive: true });
-}
-
-/**
- * Read subscribers from JSON file.
- */
-async function readSubscribers() {
-  await ensureDataDir();
-  try {
-    const data = await fs.readFile(subscribersPath, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      await fs.writeFile(subscribersPath, JSON.stringify([]));
-      return [];
+class SubscriberStorageError extends Error {
+  constructor(message, options = {}) {
+    super(message);
+    this.name = 'SubscriberStorageError';
+    if (options.cause) {
+      this.cause = options.cause;
     }
-    throw error;
+    this.code = options.code || 'storage-error';
   }
 }
 
-/**
- * Write subscribers array to JSON file.
- * @param {Array} subscribers
- */
-async function writeSubscribers(subscribers) {
-  await ensureDataDir();
-  await fs.writeFile(subscribersPath, JSON.stringify(subscribers, null, 2));
+function subscriberHashKey(normalizedEmail) {
+  return `${SUBSCRIBER_HASH_PREFIX}${normalizedEmail}`;
+}
+
+function sortSubscribers(list) {
+  return [...list]
+    .filter(Boolean)
+    .sort((a, b) => {
+      const first = a?.subscribedAt || a?.joinedAt || '';
+      const second = b?.subscribedAt || b?.joinedAt || '';
+      if (first === second) {
+        return (a?.email || '').localeCompare(b?.email || '');
+      }
+      return first.localeCompare(second);
+    });
+}
+
+function normalizeRecordShape(rawRecord = {}) {
+  if (!rawRecord) {
+    return null;
+  }
+
+  const record = { ...rawRecord };
+  record.subscribedAt = record.subscribedAt || record.joinedAt || new Date().toISOString();
+  record.joinedAt = record.joinedAt || record.subscribedAt;
+  return record;
+}
+
+async function getSubscribers() {
+  if (subscriberStoreMode === 'kv' && kvClient) {
+    try {
+      const emails = await kvClient.smembers(SUBSCRIBERS_SET_KEY);
+      if (!emails || emails.length === 0) {
+        return [];
+      }
+
+      const subscribers = await Promise.all(
+        emails.map(async (normalizedEmail) => {
+          try {
+            const hash = await kvClient.hgetall(subscriberHashKey(normalizedEmail));
+            if (!hash || Object.keys(hash).length === 0) {
+              return null;
+            }
+            const hydrated = Object.entries(hash).reduce((acc, [key, value]) => {
+              if (value === undefined || value === null) {
+                return acc;
+              }
+              if (key === 'metadata') {
+                try {
+                  acc.metadata = JSON.parse(value);
+                  return acc;
+                } catch {
+                  acc.metadata = value;
+                  return acc;
+                }
+              }
+              acc[key] = value;
+              return acc;
+            }, {});
+            if (!hydrated.email) {
+              hydrated.email = normalizedEmail;
+            }
+            const merged = normalizeRecordShape(hydrated);
+            return merged;
+          } catch (innerError) {
+            logger.warn('Failed to hydrate subscriber from Vercel KV.', {
+              email: normalizedEmail,
+              message: innerError?.message,
+            });
+            return null;
+          }
+        }),
+      );
+
+      return sortSubscribers(subscribers.filter(Boolean));
+    } catch (error) {
+      logger.error('Vercel KV getSubscribers failed.', { message: error?.message });
+      throw new SubscriberStorageError('Failed to read subscribers from Vercel KV.', {
+        cause: error,
+        code: 'kv-read-failed',
+      });
+    }
+  }
+
+  return sortSubscribers(Array.from(inMemorySubscribers.values()).map(normalizeRecordShape));
+}
+
+async function addSubscriber(email, name = null, metadata = {}) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) {
+    throw new SubscriberStorageError('Cannot add subscriber with invalid email address.', {
+      code: 'invalid-email',
+    });
+  }
+
+  const safeMetadata = metadata && typeof metadata === 'object' ? metadata : {};
+  const timestamp = safeMetadata.subscribedAt || safeMetadata.joinedAt || new Date().toISOString();
+  const baseEmail = safeMetadata.email || extractEmailAddress(email) || normalized;
+
+  const additionalMetadata = { ...safeMetadata };
+  delete additionalMetadata.email;
+  delete additionalMetadata.subscribedAt;
+  delete additionalMetadata.joinedAt;
+
+  const record = normalizeRecordShape({
+    email: baseEmail,
+    subscribedAt: timestamp,
+    ...(name ? { name } : {}),
+    ...additionalMetadata,
+  });
+
+  if (subscriberStoreMode === 'kv' && kvClient) {
+    try {
+      const kvPayload = {};
+      for (const [key, value] of Object.entries(record)) {
+        if (value === undefined || value === null) {
+          continue;
+        }
+        if (typeof value === 'string') {
+          kvPayload[key] = value;
+        } else {
+          kvPayload[key] = JSON.stringify(value);
+        }
+      }
+
+      await kvClient.sadd(SUBSCRIBERS_SET_KEY, normalized);
+      try {
+        await kvClient.hset(subscriberHashKey(normalized), kvPayload);
+      } catch (writeError) {
+        await kvClient.srem(SUBSCRIBERS_SET_KEY, normalized);
+        throw writeError;
+      }
+    } catch (error) {
+      logger.error('Vercel KV addSubscriber failed.', { message: error?.message });
+      throw new SubscriberStorageError('Failed to add subscriber to Vercel KV.', {
+        cause: error,
+        code: 'kv-write-failed',
+      });
+    }
+  } else {
+    inMemorySubscribers.set(normalized, record);
+  }
+
+  return record;
+}
+
+async function removeSubscriber(email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) {
+    throw new SubscriberStorageError('Cannot remove subscriber with invalid email address.', {
+      code: 'invalid-email',
+    });
+  }
+
+  if (subscriberStoreMode === 'kv' && kvClient) {
+    try {
+      const removed = await kvClient.srem(SUBSCRIBERS_SET_KEY, normalized);
+      if (!removed) {
+        return false;
+      }
+      await kvClient.del(subscriberHashKey(normalized));
+      return true;
+    } catch (error) {
+      logger.error('Vercel KV removeSubscriber failed.', { message: error?.message });
+      throw new SubscriberStorageError('Failed to remove subscriber from Vercel KV.', {
+        cause: error,
+        code: 'kv-delete-failed',
+      });
+    }
+  }
+
+  return inMemorySubscribers.delete(normalized);
+}
+
+async function subscriberExists(email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) {
+    return false;
+  }
+
+  if (subscriberStoreMode === 'kv' && kvClient) {
+    try {
+      const exists = await kvClient.sismember(SUBSCRIBERS_SET_KEY, normalized);
+      return Boolean(exists);
+    } catch (error) {
+      logger.error('Vercel KV subscriberExists failed.', { message: error?.message });
+      throw new SubscriberStorageError('Failed to check subscriber in Vercel KV.', {
+        cause: error,
+        code: 'kv-read-failed',
+      });
+    }
+  }
+
+  return inMemorySubscribers.has(normalized);
 }
 
 /**
@@ -578,11 +792,18 @@ function isValidEmail(value) {
  */
 app.get('/api/subscribers', async (_, res) => {
   try {
-    const subscribers = await readSubscribers();
+    const subscribers = await getSubscribers();
     res.json({ subscribers });
   } catch (error) {
-    logger.error('Failed to read subscribers:', error);
-    res.status(500).json({ message: 'Failed to load subscribers.' });
+    logger.error('Failed to read subscribers.', {
+      message: error?.message,
+      code: error?.code,
+    });
+    const message =
+      error instanceof SubscriberStorageError
+        ? 'Unable to load subscribers from storage. Please verify the Vercel KV configuration.'
+        : 'Failed to load subscribers.';
+    res.status(500).json({ message });
   }
 });
 
@@ -590,38 +811,34 @@ app.get('/api/subscribers', async (_, res) => {
  * Add a new subscriber.
  */
 app.post('/api/subscribers', async (req, res) => {
-  const { email } = req.body;
+  const { email, name } = req.body;
 
   if (!email || !isValidEmail(email)) {
     res.status(400).json({ message: 'Please provide a valid email address.' });
     return;
   }
 
-  const normalizedEmail = extractEmailAddress(email);
+  const canonicalEmail = extractEmailAddress(email);
+  const sanitizedName = sanitizeName(typeof name === 'string' ? name : '');
 
   try {
-    const subscribers = await readSubscribers();
-    const alreadyExists = subscribers.some(
-      (subscriber) =>
-        extractEmailAddress(subscriber.email)?.toLowerCase() === normalizedEmail.toLowerCase(),
-    );
-
-    if (alreadyExists) {
+    if (await subscriberExists(canonicalEmail)) {
       res.status(409).json({ message: 'This email is already subscribed.' });
       return;
     }
 
-    const newSubscriber = {
-      email: normalizedEmail,
-      joinedAt: new Date().toISOString(),
-    };
-
-    subscribers.push(newSubscriber);
-    await writeSubscribers(subscribers);
+    const newSubscriber = await addSubscriber(canonicalEmail, sanitizedName || null);
     res.status(201).json({ subscriber: newSubscriber });
   } catch (error) {
-    logger.error('Failed to add subscriber:', error);
-    res.status(500).json({ message: 'Could not add subscriber. Please try again later.' });
+    logger.error('Failed to add subscriber.', {
+      message: error?.message,
+      code: error?.code,
+    });
+    const message =
+      error instanceof SubscriberStorageError
+        ? 'Could not add subscriber because storage is unavailable. Please verify the Vercel KV connection.'
+        : 'Could not add subscriber. Please try again later.';
+    res.status(500).json({ message });
   }
 });
 
@@ -638,22 +855,23 @@ app.delete('/api/subscribers/:encodedEmail', async (req, res) => {
   }
 
   try {
-    const subscribers = await readSubscribers();
-    const filtered = subscribers.filter(
-      (subscriber) =>
-        extractEmailAddress(subscriber.email)?.toLowerCase() !== normalizedTarget.toLowerCase(),
-    );
-
-    if (filtered.length === subscribers.length) {
+    const removed = await removeSubscriber(normalizedTarget);
+    if (!removed) {
       res.status(404).json({ message: 'Subscriber not found.' });
       return;
     }
 
-    await writeSubscribers(filtered);
     res.status(200).json({ message: 'Subscriber removed.' });
   } catch (error) {
-    logger.error('Failed to remove subscriber:', error);
-    res.status(500).json({ message: 'Could not remove subscriber.' });
+    logger.error('Failed to remove subscriber.', {
+      message: error?.message,
+      code: error?.code,
+    });
+    const message =
+      error instanceof SubscriberStorageError
+        ? 'Unable to remove subscriber because storage is unavailable. Please verify the Vercel KV connection.'
+        : 'Could not remove subscriber.';
+    res.status(500).json({ message });
   }
 });
 
@@ -682,27 +900,15 @@ app.post('/api/public/subscribe', async (req, res) => {
   }
 
   const normalizedEmail = normalizeEmail(email);
+  const canonicalEmail = extractEmailAddress(email);
   try {
-    const subscribers = await readSubscribers();
-    const alreadyExists = subscribers.some(
-      (subscriber) => normalizeEmail(subscriber.email) === normalizedEmail,
-    );
-
-    if (alreadyExists) {
+    if (await subscriberExists(canonicalEmail)) {
       logger.info('Public subscribe duplicate attempt.', { ip, email: normalizedEmail });
       res.status(200).json({ success: false, error: 'Email already subscribed' });
       return;
     }
 
-    const newSubscriber = {
-      email: normalizedEmail,
-      ...(sanitizedName ? { name: sanitizedName } : {}),
-      joinedAt: new Date().toISOString(),
-      source: 'public-api',
-    };
-
-    subscribers.push(newSubscriber);
-    await writeSubscribers(subscribers);
+    await addSubscriber(canonicalEmail, sanitizedName || null, { source: 'public-api' });
 
     logger.info('Public subscribe success.', { ip, email: normalizedEmail, name: sanitizedName });
     res.json({ success: true, message: 'Successfully subscribed!' });
@@ -711,10 +917,15 @@ app.post('/api/public/subscribe', async (req, res) => {
       ip,
       email: normalizedEmail,
       message: error?.message,
+      code: error?.code,
     });
+    const errorMessage =
+      error instanceof SubscriberStorageError
+        ? 'Subscriber storage is unavailable. Please try again after the Vercel KV connection is restored.'
+        : 'We could not process your subscription right now. Please try again later.';
     res.status(500).json({
       success: false,
-      error: 'We could not process your subscription right now. Please try again later.',
+      error: errorMessage,
     });
   }
 });
@@ -743,21 +954,17 @@ app.post('/api/public/unsubscribe', async (req, res) => {
   }
 
   const normalizedEmail = normalizeEmail(email);
+  const canonicalEmail = extractEmailAddress(email);
 
   try {
-    const subscribers = await readSubscribers();
-    const filtered = subscribers.filter(
-      (subscriber) => normalizeEmail(subscriber.email) !== normalizedEmail,
-    );
-
-    if (filtered.length === subscribers.length) {
+    const removed = await removeSubscriber(canonicalEmail);
+    if (!removed) {
       logger.info('Public unsubscribe not found.', { ip, email: normalizedEmail });
       recordSuspiciousAttempt(ip, 'unsubscribe-not-found', { email: normalizedEmail });
       res.status(200).json({ success: false, error: 'Email not found' });
       return;
     }
 
-    await writeSubscribers(filtered);
     logger.info('Public unsubscribe success.', { ip, email: normalizedEmail });
     res.json({ success: true, message: 'Successfully unsubscribed' });
   } catch (error) {
@@ -765,10 +972,14 @@ app.post('/api/public/unsubscribe', async (req, res) => {
       ip,
       email: normalizedEmail,
       message: error?.message,
+      code: error?.code,
     });
     res.status(500).json({
       success: false,
-      error: 'We could not process your unsubscribe request right now. Please try again later.',
+      error:
+        error instanceof SubscriberStorageError
+          ? 'Subscriber storage is unavailable. Please try again after the Vercel KV connection is restored.'
+          : 'We could not process your unsubscribe request right now. Please try again later.',
     });
   }
 });
@@ -865,7 +1076,7 @@ app.post('/api/send-newsletter', async (req, res) => {
 
   try {
     const sanitizedContent = sanitizeHtml(content, sanitizerOptions);
-    const subscribers = await readSubscribers();
+    const subscribers = await getSubscribers();
 
     if (subscribers.length === 0) {
       lastEmailDiagnostic = {
@@ -1021,11 +1232,20 @@ app.post('/api/send-newsletter', async (req, res) => {
       name: error?.name,
       response: error?.response,
       stack: error?.stack,
+      code: error?.code,
     });
     const friendlyMessage =
-      error?.response?.body?.message || error.message || 'Unknown error occurred.';
+      error instanceof SubscriberStorageError
+        ? 'Unable to load subscribers from storage. Please verify the Vercel KV connection.'
+        : error?.response?.body?.message || error.message || 'Unknown error occurred.';
 
-    const suggestions = buildResendSuggestions(error?.message);
+    const suggestions =
+      error instanceof SubscriberStorageError
+        ? [
+            'Confirm KV_REST_API_URL and KV_REST_API_TOKEN are set and valid.',
+            'Verify the Vercel KV database is accessible from this environment.',
+          ]
+        : buildResendSuggestions(error?.message);
 
     lastEmailDiagnostic = {
       timestamp: new Date().toISOString(),
@@ -1207,7 +1427,7 @@ app.post('/api/test-email', async (req, res) => {
  */
 app.get('/api/diagnostics', async (_, res) => {
   try {
-    const subscribers = await readSubscribers();
+    const subscribers = await getSubscribers();
     let cloudinaryStatus = {
       ok: true,
       message: 'Connected',
@@ -1244,6 +1464,11 @@ app.get('/api/diagnostics', async (_, res) => {
       senderEmailValid: isValidEmail(senderEmail),
       senderEmailIsTestDomain: senderEmail.toLowerCase().includes('onboarding@resend.dev'),
       subscriberCount: subscribers.length,
+      subscriberStorage: {
+        mode: subscriberStoreMode,
+        kvConfigured: subscriberStoreMode === 'kv',
+        initializationError: kvInitializationError ? kvInitializationError.message : null,
+      },
       resendStatus,
       cloudinaryStatus,
       lastEmailSent: lastEmailDiagnostic,
@@ -1255,6 +1480,7 @@ app.get('/api/diagnostics', async (_, res) => {
       message: error?.message,
       statusCode: error?.statusCode,
       name: error?.name,
+      code: error?.code,
     });
     res.status(500).json({
       message: 'Diagnostics check failed.',
