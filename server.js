@@ -473,8 +473,6 @@ function generateCampaignId() {
   const suffix = crypto.randomBytes(2).toString('hex');
   return `${base}-${suffix}`;
 }
-  return crypto.randomBytes(16).toString('hex');
-}
 
 function createEmptyMetricSnapshot() {
   return {
