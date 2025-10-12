@@ -7,6 +7,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const sanitizeHtml = require('sanitize-html');
@@ -30,6 +31,26 @@ const RATE_LIMIT_BACKOFF_SCHEDULE_MS = [2000, 4000];
 const STORAGE_RETRY_DELAYS_MS = [250, 500];
 const VERIFICATION_DELAY_MS = 150;
 const VERIFICATION_MAX_ATTEMPTS = 3;
+const ANALYTICS_INDEX_KEY = 'newsletter:analytics:index';
+const ANALYTICS_PREFIX = 'newsletter:analytics:campaign:';
+const ANALYTICS_AGGREGATE_KEY = 'newsletter:analytics:aggregate';
+const NEWSLETTER_ARCHIVE_PREFIX = 'newsletter:archive:';
+const CLICK_TRACKING_PATH = '/t/click';
+const OPEN_TRACKING_PATH = '/t/open';
+const TRACKING_PIXEL_FILENAME = 'pixel.gif';
+const FLAGGED_SUBSCRIBERS_SET_KEY = 'newsletter:flagged-subscribers';
+const BOUNCE_LOG_PREFIX = 'newsletter:bounce:';
+const DEFAULT_PHYSICAL_ADDRESS =
+  process.env.MAILING_ADDRESS ||
+  'Example Newsletter · 123 Main Street · Suite 100 · Anytown, USA';
+const ENABLE_OPEN_TRACKING = process.env.ENABLE_OPEN_TRACKING !== 'false';
+const ENABLE_CLICK_TRACKING = process.env.ENABLE_CLICK_TRACKING !== 'false';
+const WARMUP_MODE_ENABLED = process.env.WARMUP_MODE === 'true';
+const WARMUP_INITIAL_LIMIT = Number(process.env.WARMUP_INITIAL_LIMIT || 50);
+const WARMUP_GROWTH_DAYS = Number(process.env.WARMUP_GROWTH_DAYS || 7);
+const WARMUP_GROWTH_INCREMENT = Number(process.env.WARMUP_GROWTH_INCREMENT || 50);
+const ABSOLUTE_DAILY_SEND_LIMIT = Number(process.env.DAILY_SEND_LIMIT || 0);
+const CLICK_ALLOWED_SCHEMES = ['https:'];
 
 /**
  * Tiny timestamped logger for consistent console output in production.
@@ -48,6 +69,26 @@ const logger = {
 
 const KV_ENV_VARS = ['KV_REST_API_URL', 'KV_REST_API_TOKEN'];
 const inMemorySubscribers = new Map();
+const inMemoryFlaggedSubscribers = new Set();
+const inMemoryAnalyticsStore = {
+  aggregate: {
+    sent: 0,
+    delivered: 0,
+    opens: 0,
+    clicks: 0,
+    bounces: 0,
+    unsubscribes: 0,
+  },
+  campaigns: new Map(),
+  index: [],
+  opens: new Map(),
+  clicks: new Map(),
+};
+const warmupState = {
+  dayKey: null,
+  sent: 0,
+  history: [],
+};
 let kvClient = null;
 let kvInitializationError = null;
 let subscriberStoreMode = 'memory';
@@ -287,6 +328,378 @@ function stripHtml(html) {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function generateNewsletterId() {
+  if (typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function createEmptyMetricSnapshot() {
+  return {
+    sent: 0,
+    delivered: 0,
+    opens: 0,
+    clicks: 0,
+    bounces: 0,
+    unsubscribes: 0,
+  };
+}
+
+function hashRecipientForMetric(newsletterId, recipientEmail) {
+  if (!newsletterId || !recipientEmail) {
+    return null;
+  }
+  return crypto
+    .createHash('sha256')
+    .update(`${newsletterId}:${recipientEmail.toLowerCase()}`)
+    .digest('hex');
+}
+
+function getWarmupDayKey() {
+  const now = new Date();
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(
+    now.getUTCDate(),
+  ).padStart(2, '0')}`;
+}
+
+function analyticsUsesKv() {
+  return Boolean(kvClient);
+}
+
+async function getAggregateMetrics() {
+  if (analyticsUsesKv()) {
+    const raw = await withKvRetries(
+      () => kvClient.get(ANALYTICS_AGGREGATE_KEY),
+      'analytics-get-aggregate',
+    );
+    if (!raw) {
+      return createEmptyMetricSnapshot();
+    }
+    try {
+      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (error) {
+      logger.warn('Failed to parse aggregate analytics payload; resetting.', {
+        message: error?.message,
+      });
+      return createEmptyMetricSnapshot();
+    }
+  }
+  return { ...inMemoryAnalyticsStore.aggregate };
+}
+
+async function saveAggregateMetrics(snapshot) {
+  const safeSnapshot = snapshot || createEmptyMetricSnapshot();
+  if (analyticsUsesKv()) {
+    await withKvRetries(
+      () => kvClient.set(ANALYTICS_AGGREGATE_KEY, JSON.stringify(safeSnapshot)),
+      'analytics-set-aggregate',
+    );
+    return;
+  }
+  inMemoryAnalyticsStore.aggregate = { ...safeSnapshot };
+}
+
+async function getCampaignRecord(newsletterId) {
+  if (!newsletterId) {
+    return null;
+  }
+  if (analyticsUsesKv()) {
+    const raw = await withKvRetries(
+      () => kvClient.get(`${ANALYTICS_PREFIX}${newsletterId}`),
+      'analytics-get-campaign',
+    );
+    if (!raw) {
+      return null;
+    }
+    try {
+      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (error) {
+      logger.warn('Failed to parse campaign analytics payload.', {
+        message: error?.message,
+        newsletterId,
+      });
+      return null;
+    }
+  }
+  return inMemoryAnalyticsStore.campaigns.get(newsletterId) || null;
+}
+
+async function saveCampaignRecord(record) {
+  if (!record?.id) {
+    return;
+  }
+  const payload = {
+    ...record,
+    metrics: { ...createEmptyMetricSnapshot(), ...(record.metrics || {}) },
+  };
+  if (analyticsUsesKv()) {
+    await withKvRetries(
+      () => kvClient.set(`${ANALYTICS_PREFIX}${record.id}`, JSON.stringify(payload)),
+      'analytics-set-campaign',
+    );
+    await withKvRetries(
+      () => kvClient.lrem(ANALYTICS_INDEX_KEY, 0, record.id),
+      'analytics-index-remove',
+    );
+    await withKvRetries(
+      () => kvClient.lpush(ANALYTICS_INDEX_KEY, record.id),
+      'analytics-index-add',
+    );
+    await withKvRetries(
+      () => kvClient.ltrim(ANALYTICS_INDEX_KEY, 0, 49),
+      'analytics-index-trim',
+    );
+    return;
+  }
+  inMemoryAnalyticsStore.campaigns.set(record.id, payload);
+  inMemoryAnalyticsStore.index = [
+    record.id,
+    ...inMemoryAnalyticsStore.index.filter((candidate) => candidate !== record.id),
+  ].slice(0, 50);
+}
+
+async function listRecentCampaignRecords() {
+  if (analyticsUsesKv()) {
+    const ids = await withKvRetries(
+      () => kvClient.lrange(ANALYTICS_INDEX_KEY, 0, 49),
+      'analytics-index-list',
+    );
+    if (!ids || ids.length === 0) {
+      return [];
+    }
+    const records = [];
+    for (const id of ids) {
+      // eslint-disable-next-line no-await-in-loop
+      const record = await getCampaignRecord(id);
+      if (record) {
+        records.push(record);
+      }
+    }
+    return records;
+  }
+  return inMemoryAnalyticsStore.index
+    .map((id) => inMemoryAnalyticsStore.campaigns.get(id))
+    .filter(Boolean);
+}
+
+async function recordAggregateDelta(delta) {
+  const aggregate = await getAggregateMetrics();
+  const fields = Object.keys(createEmptyMetricSnapshot());
+  fields.forEach((field) => {
+    if (typeof delta[field] === 'number') {
+      aggregate[field] = Math.max(0, (aggregate[field] || 0) + delta[field]);
+    }
+  });
+  await saveAggregateMetrics(aggregate);
+}
+
+async function recordCampaignMetric(newsletterId, metric, recipientEmail) {
+  if (!newsletterId || !metric) {
+    return { updated: false };
+  }
+  const record = await getCampaignRecord(newsletterId);
+  if (!record) {
+    return { updated: false };
+  }
+
+  const allowedMetric = ['opens', 'clicks', 'bounces', 'unsubscribes', 'delivered'].includes(
+    metric,
+  );
+  if (!allowedMetric) {
+    return { updated: false };
+  }
+
+  let recipientHash = null;
+  if (recipientEmail && ['opens', 'clicks', 'unsubscribes'].includes(metric)) {
+    recipientHash = hashRecipientForMetric(newsletterId, recipientEmail);
+  }
+
+  if (analyticsUsesKv()) {
+    if (recipientHash) {
+      const key = `${ANALYTICS_PREFIX}${newsletterId}:dedupe:${metric}`;
+      const added = await withKvRetries(
+        () => kvClient.sadd(key, recipientHash),
+        `analytics-dedupe-${metric}`,
+      );
+      if (added === 0) {
+        return { updated: false, record };
+      }
+    }
+    record.metrics[metric] = Math.max(0, (record.metrics[metric] || 0) + 1);
+    await saveCampaignRecord(record);
+    await recordAggregateDelta({ [metric]: 1 });
+    return { updated: true, record };
+  }
+
+  if (recipientHash) {
+    const targetMap =
+      metric === 'opens'
+        ? inMemoryAnalyticsStore.opens
+        : metric === 'clicks'
+        ? inMemoryAnalyticsStore.clicks
+        : null;
+    if (targetMap) {
+      const existingSet = targetMap.get(newsletterId) || new Set();
+      if (existingSet.has(recipientHash)) {
+        return { updated: false, record };
+      }
+      existingSet.add(recipientHash);
+      targetMap.set(newsletterId, existingSet);
+    }
+  }
+
+  record.metrics[metric] = Math.max(0, (record.metrics[metric] || 0) + 1);
+  inMemoryAnalyticsStore.aggregate[metric] = Math.max(
+    0,
+    (inMemoryAnalyticsStore.aggregate[metric] || 0) + 1,
+  );
+  inMemoryAnalyticsStore.campaigns.set(newsletterId, record);
+  return { updated: true, record };
+}
+
+async function recordBounceMetric(newsletterId, recipientEmail, reason = '') {
+  const result = await recordCampaignMetric(newsletterId, 'bounces', recipientEmail);
+  if (result.updated) {
+    await recordAggregateDelta({ bounces: 1 });
+  }
+  const timestamp = new Date().toISOString();
+  if (analyticsUsesKv()) {
+    const key = `${BOUNCE_LOG_PREFIX}${recipientEmail.toLowerCase()}`;
+    await withKvRetries(
+      () =>
+        kvClient.set(
+          key,
+          JSON.stringify({
+            reason,
+            newsletterId,
+            timestamp,
+          }),
+        ),
+      'bounce-log-set',
+    );
+    await withKvRetries(
+      () => kvClient.sadd(FLAGGED_SUBSCRIBERS_SET_KEY, recipientEmail.toLowerCase()),
+      'flag-subscriber',
+    );
+  } else {
+    inMemoryFlaggedSubscribers.add(recipientEmail.toLowerCase());
+  }
+}
+
+async function recordUnsubscribeMetric(newsletterId, recipientEmail) {
+  await recordCampaignMetric(newsletterId, 'unsubscribes', recipientEmail);
+}
+
+async function resetWarmupCounterIfNeeded() {
+  const dayKey = getWarmupDayKey();
+  if (!WARMUP_MODE_ENABLED) {
+    return;
+  }
+  if (analyticsUsesKv()) {
+    const key = 'newsletter:warmup:state';
+    const raw = await withKvRetries(() => kvClient.get(key), 'warmup-get-state');
+    let state = null;
+    if (raw) {
+      try {
+        state = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      } catch (error) {
+        state = null;
+      }
+    }
+    if (!state || state.dayKey !== dayKey) {
+      state = { dayKey, sent: 0, history: state?.history || [] };
+      await withKvRetries(
+        () => kvClient.set(key, JSON.stringify(state)),
+        'warmup-reset-state',
+      );
+      return state;
+    }
+    return state;
+  }
+  if (warmupState.dayKey !== dayKey) {
+    warmupState.dayKey = dayKey;
+    warmupState.sent = 0;
+  }
+  return { dayKey: warmupState.dayKey, sent: warmupState.sent };
+}
+
+async function updateWarmupCounter(delta) {
+  if (!WARMUP_MODE_ENABLED) {
+    return;
+  }
+  const key = 'newsletter:warmup:state';
+  if (analyticsUsesKv()) {
+    const raw = await withKvRetries(() => kvClient.get(key), 'warmup-get-state');
+    let state = null;
+    if (raw) {
+      try {
+        state = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      } catch (error) {
+        state = null;
+      }
+    }
+    if (!state) {
+      state = { dayKey: getWarmupDayKey(), sent: 0, history: [] };
+    }
+    state.sent = Math.max(0, (state.sent || 0) + delta);
+    await withKvRetries(() => kvClient.set(key, JSON.stringify(state)), 'warmup-set-state');
+    return state;
+  }
+  warmupState.sent = Math.max(0, (warmupState.sent || 0) + delta);
+  return { dayKey: warmupState.dayKey, sent: warmupState.sent };
+}
+
+function computeWarmupLimit(historyCount = 0) {
+  if (!WARMUP_MODE_ENABLED) {
+    return Infinity;
+  }
+  const base = Math.max(1, WARMUP_INITIAL_LIMIT);
+  const growthSteps = Math.max(0, Math.floor(historyCount / Math.max(1, WARMUP_GROWTH_DAYS)));
+  return base + growthSteps * Math.max(1, WARMUP_GROWTH_INCREMENT);
+}
+
+async function flagSubscriberEmail(email, reason = '') {
+  if (!email) {
+    return;
+  }
+  const normalized = email.toLowerCase();
+  if (analyticsUsesKv()) {
+    await withKvRetries(
+      () => kvClient.sadd(FLAGGED_SUBSCRIBERS_SET_KEY, normalized),
+      'flag-subscriber-sadd',
+    );
+    await withKvRetries(
+      () =>
+        kvClient.set(
+          `${FLAGGED_SUBSCRIBERS_SET_KEY}:reason:${normalized}`,
+          JSON.stringify({ reason, timestamp: new Date().toISOString() }),
+        ),
+      'flag-subscriber-reason',
+    );
+  } else {
+    inMemoryFlaggedSubscribers.add(normalized);
+  }
+}
+
+async function unflagSubscriberEmail(email) {
+  if (!email) {
+    return;
+  }
+  const normalized = email.toLowerCase();
+  if (analyticsUsesKv()) {
+    await withKvRetries(
+      () => kvClient.srem(FLAGGED_SUBSCRIBERS_SET_KEY, normalized),
+      'flag-subscriber-srem',
+    );
+    await withKvRetries(
+      () => kvClient.del(`${FLAGGED_SUBSCRIBERS_SET_KEY}:reason:${normalized}`),
+      'flag-subscriber-del',
+    );
+  } else {
+    inMemoryFlaggedSubscribers.delete(normalized);
+  }
+}
 /**
  * Provide actionable suggestions based on common Resend error messages.
  */
