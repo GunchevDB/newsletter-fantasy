@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -35,7 +35,7 @@
           data-target="compose-view"
           id="compose-tab"
         >
-          <span class="icon" aria-hidden="true">✍️</span>
+          <span class="icon" aria-hidden="true">âœï¸</span>
           <span>Compose</span>
         </button>
         <button
@@ -46,7 +46,7 @@
           data-target="subscribers-view"
           id="subscribers-tab"
         >
-          <span class="icon" aria-hidden="true">👥</span>
+          <span class="icon" aria-hidden="true">ðŸ‘¥</span>
           <span>Subscribers</span>
         </button>
         <button
@@ -57,13 +57,13 @@
           data-target="analytics-view"
           id="analytics-tab"
         >
-          <span class="icon" aria-hidden="true">📊</span>
+          <span class="icon" aria-hidden="true">ðŸ“Š</span>
           <span>Analytics</span>
         </button>
       </nav>
       <div class="nav-actions">
         <button id="logout-button" class="btn ghost icon-left" type="button">
-          <span class="icon" aria-hidden="true">🚪</span>
+          <span class="icon" aria-hidden="true">ðŸšª</span>
           <span>Logout</span>
         </button>
       </div>
@@ -97,7 +97,7 @@
             <div class="field">
               <div class="field-label-wrapper">
                 <label class="field-label" for="newsletter-preview-text">Preview text</label>
-                <span class="field-hint">Optional · Shown in inbox snippets</span>
+                <span class="field-hint">Optional Â· Shown in inbox snippets</span>
               </div>
               <div class="with-counter">
                 <input
@@ -122,15 +122,15 @@
                   <span class="sr-only">Italic</span>
                 </button>
                 <button class="btn ghost" data-command="createLink" type="button">
-                  <span class="icon" aria-hidden="true">🔗</span>
+                  <span class="icon" aria-hidden="true">ðŸ”—</span>
                   <span class="sr-only">Insert link</span>
                 </button>
                 <button class="btn ghost" data-command="insertUnorderedList" type="button">
-                  <span class="icon" aria-hidden="true">•</span>
+                  <span class="icon" aria-hidden="true">â€¢</span>
                   <span class="sr-only">Bullet list</span>
                 </button>
                 <button id="upload-image-trigger" class="btn secondary icon-left" type="button">
-                  <span class="icon" aria-hidden="true">🖼️</span>
+                  <span class="icon" aria-hidden="true">ðŸ–¼ï¸</span>
                   <span>Insert image</span>
                 </button>
                 <input id="image-upload-input" type="file" accept="image/*" hidden />
@@ -147,15 +147,15 @@
           <footer class="card-footer compose-actions">
             <div class="action-buttons">
               <button id="preview-button" class="btn secondary icon-left" type="button">
-                <span class="icon" aria-hidden="true">👁️</span>
+                <span class="icon" aria-hidden="true">ðŸ‘ï¸</span>
                 <span>Preview email</span>
               </button>
               <button id="send-button" class="btn primary icon-left" type="button">
-                <span class="icon" aria-hidden="true">📧</span>
+                <span class="icon" aria-hidden="true">ðŸ“§</span>
                 <span>Send newsletter</span>
               </button>
               <button id="save-draft-button" class="btn ghost icon-left" type="button">
-                <span class="icon" aria-hidden="true">💾</span>
+                <span class="icon" aria-hidden="true">ðŸ’¾</span>
                 <span>Save draft</span>
               </button>
             </div>
@@ -184,7 +184,7 @@
                 Storage: --
               </span>
               <button id="toggle-add-subscriber" class="btn primary icon-left" type="button">
-                <span class="icon" aria-hidden="true">➕</span>
+                <span class="icon" aria-hidden="true">âž•</span>
                 <span>Add subscriber</span>
               </button>
             </div>
@@ -199,7 +199,7 @@
                   placeholder="Search by name or email"
                   autocomplete="off"
                 />
-                <span class="icon" aria-hidden="true">🔍</span>
+                <span class="icon" aria-hidden="true">ðŸ”</span>
               </label>
               <label class="filter-field">
                 <span class="field-label">Filter</span>
@@ -238,7 +238,7 @@
               </div>
               <div class="form-actions">
                 <button type="submit" class="btn primary icon-left">
-                  <span class="icon" aria-hidden="true">✔️</span>
+                  <span class="icon" aria-hidden="true">âœ”ï¸</span>
                   <span>Add subscriber</span>
                 </button>
                 <button type="button" class="btn ghost" id="cancel-add-subscriber">
@@ -282,7 +282,8 @@
         </article>
       </section>
 
-      <section
+            <!-- Analytics dashboard content -->
+            <section
         id="analytics-view"
         class="view-card"
         data-view="analytics-view"
@@ -290,18 +291,76 @@
         aria-labelledby="analytics-tab"
       >
         <article class="card analytics-card">
-          <header class="card-header">
+          <header class="card-header analytics-header">
             <div>
-              <h2>Analytics (Coming Soon)</h2>
-              <p>Stay tuned for deliverability insights, engagement trends, and more.</p>
+              <h2>Analytics Overview</h2>
+              <p>Monitor how your newsletters are performing at a glance.</p>
+            </div>
+            <div class="analytics-actions">
+              <button id="refresh-analytics" class="btn ghost" type="button">Refresh</button>
             </div>
           </header>
-          <div class="card-body analytics-placeholder">
-            <span class="icon" aria-hidden="true">🛠️</span>
-            <p>
-              We&rsquo;re building a dashboard with open rates, click performance, and subscriber
-              growth. In the meantime, use the diagnostics endpoint for delivery status.
-            </p>
+          <div class="card-body analytics-body">
+            <div id="analytics-loading" class="analytics-loading" role="status" aria-live="polite">
+              <span class="spinner" aria-hidden="true"></span>
+              Loading analytics&hellip;
+            </div>
+            <p id="analytics-error" class="analytics-error hidden" role="alert"></p>
+            <div id="analytics-content" class="analytics-content hidden">
+              <div class="analytics-metrics">
+                <div class="metric-card">
+                  <p class="metric-label">Total Subscribers</p>
+                  <p class="metric-value" id="analytics-total-subscribers">0</p>
+                </div>
+                <div class="metric-card">
+                  <p class="metric-label">Total Sent</p>
+                  <p class="metric-value" id="analytics-total-sent">0</p>
+                </div>
+                <div class="metric-card">
+                  <p class="metric-label">Last Campaign</p>
+                  <p class="metric-value" id="analytics-last-campaign">--</p>
+                  <p class="metric-subtext" id="analytics-last-campaign-status">No campaigns yet</p>
+                </div>
+              </div>
+
+              <section class="analytics-panel">
+                <header class="analytics-panel-header">
+                  <div>
+                    <h3>Recent Campaigns</h3>
+                    <p class="panel-subtext">Delivery performance for your latest sends</p>
+                  </div>
+                </header>
+                <div class="table-responsive">
+                  <table class="analytics-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Title</th>
+                        <th scope="col">Date</th>
+                        <th scope="col">Recipients</th>
+                        <th scope="col">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="analytics-campaigns-body">
+                      <tr id="analytics-campaigns-empty">
+                        <td colspan="4" class="muted">Send a newsletter to populate campaign history.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section class="analytics-panel">
+                <header class="analytics-panel-header">
+                  <div>
+                    <h3>Subscriber Growth</h3>
+                    <p class="panel-subtext">Daily list size for the last 30 days</p>
+                  </div>
+                </header>
+                <div class="chart-wrapper">
+                  <canvas id="analytics-growth-chart" aria-label="Subscriber growth chart"></canvas>
+                </div>
+              </section>
+            </div>
           </div>
         </article>
       </section>
@@ -319,7 +378,7 @@
         <header class="modal-header">
           <h2 id="preview-modal-title">Email Preview</h2>
           <button id="preview-close" class="btn icon-only" type="button" aria-label="Close preview">
-            ✕
+            âœ•
           </button>
         </header>
         <div class="modal-body">
@@ -345,7 +404,7 @@
         <td class="subscriber-source"></td>
         <td class="subscriber-actions align-right">
           <button class="btn danger icon-left remove-subscriber" type="button">
-            <span class="icon" aria-hidden="true">🗑️</span>
+            <span class="icon" aria-hidden="true">ðŸ—‘ï¸</span>
             <span>Remove</span>
           </button>
         </td>
@@ -353,6 +412,9 @@
     </template>
 
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>
+
+

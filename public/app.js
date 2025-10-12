@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Frontend logic for the redesigned newsletter builder.
  * Handles navigation, compose workflow, preview modal, subscriber management,
  * image uploads, draft persistence, and sending newsletters.
@@ -116,12 +116,27 @@ document.addEventListener('DOMContentLoaded', () => {
   const cancelAddSubscriberButton = document.getElementById('cancel-add-subscriber');
   const subscriberEmailInput = document.getElementById('subscriber-email');
   const subscriberNameInput = document.getElementById('subscriber-name');
+  // Analytics references ------------------------------------------------------
+  const refreshAnalyticsButton = document.getElementById('refresh-analytics');
+  const analyticsLoading = document.getElementById('analytics-loading');
+  const analyticsError = document.getElementById('analytics-error');
+  const analyticsContent = document.getElementById('analytics-content');
+  const analyticsTotalSubscribers = document.getElementById('analytics-total-subscribers');
+  const analyticsTotalSent = document.getElementById('analytics-total-sent');
+  const analyticsLastCampaign = document.getElementById('analytics-last-campaign');
+  const analyticsLastCampaignStatus = document.getElementById('analytics-last-campaign-status');
+  const analyticsCampaignsBody = document.getElementById('analytics-campaigns-body');
+  const analyticsCampaignsEmpty = document.getElementById('analytics-campaigns-empty');
+  const analyticsGrowthCanvas = document.getElementById('analytics-growth-chart');
+
 
   let subscribersCache = [];
   let filteredSubscribers = [];
   let currentSubscriberPage = 1;
   let searchDebounceTimeout = null;
   let subscribersLoadedOnce = false;
+  let analyticsLoadedOnce = false;
+  let analyticsChart = null; // Holds the Chart.js instance so we can update or destroy between refreshes.
 
   if (toggleAddSubscriberButton) {
     toggleAddSubscriberButton.dataset.defaultContent = toggleAddSubscriberButton.innerHTML;
@@ -197,7 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
     subscriberLoading.classList.toggle('hidden', !isLoading);
   }
 
-  function setButtonLoading(button, isLoading, loadingLabel = 'Loading…') {
+  function setButtonLoading(button, isLoading, loadingLabel = 'Loadingâ€¦') {
     if (!button) {
       return;
     }
@@ -379,8 +394,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const formData = new FormData();
       formData.append('image', file);
 
-      setInlineStatus(imageUploadStatus, 'Uploading image…');
-      setButtonLoading(uploadTrigger, true, 'Uploading…');
+      setInlineStatus(imageUploadStatus, 'Uploading imageâ€¦');
+      setButtonLoading(uploadTrigger, true, 'Uploadingâ€¦');
 
       try {
         const response = await fetch('/api/upload-image', {
@@ -505,7 +520,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     setSendStatus('Sending newsletter...');
-    setButtonLoading(sendButton, true, 'Sending…');
+    setButtonLoading(sendButton, true, 'Sendingâ€¦');
 
     try {
       const response = await fetch('/api/send-newsletter', {
@@ -540,6 +555,9 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         setSendStatus('Newsletter sent successfully!');
       }
+      if (analyticsContent) {
+        loadAnalytics({ silent: true }).catch(() => {});
+      }
     } catch (error) {
       console.error(error);
       setSendStatus(error.message || 'Could not send newsletter.', true);
@@ -565,11 +583,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function formatDate(value) {
     if (!value) {
-      return '—';
+      return 'â€”';
     }
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
-      return '—';
+      return 'â€”';
     }
     return new Intl.DateTimeFormat(undefined, {
       year: 'numeric',
@@ -671,7 +689,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const removeButton = row.querySelector('.remove-subscriber');
 
         emailCell.textContent = subscriber.email || 'Unknown';
-        nameCell.textContent = subscriber.name || '—';
+        nameCell.textContent = subscriber.name || 'â€”';
         dateCell.textContent = formatDate(getSubscribedDate(subscriber));
         sourceCell.textContent = formatSource(subscriber.source);
 
@@ -813,7 +831,7 @@ document.addEventListener('DOMContentLoaded', () => {
     toggleAddSubscriberButton.setAttribute('aria-expanded', String(shouldOpen));
     if (shouldOpen) {
       toggleAddSubscriberButton.innerHTML =
-        '<span class="icon" aria-hidden="true">✖️</span><span>Close form</span>';
+        '<span class="icon" aria-hidden="true">âœ–ï¸</span><span>Close form</span>';
       subscriberEmailInput?.focus({ preventScroll: true });
     } else {
       toggleAddSubscriberButton.innerHTML =
@@ -839,7 +857,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const submitButton = addSubscriberForm.querySelector('button[type="submit"]');
     setSubscriberStatus('Adding subscriber...');
-    setButtonLoading(submitButton, true, 'Adding…');
+    setButtonLoading(submitButton, true, 'Addingâ€¦');
 
     try {
       const response = await fetch('/api/subscribers', {
@@ -913,7 +931,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     setSubscriberStatus(`Removing ${email}...`);
-    setButtonLoading(target, true, 'Removing…');
+    setButtonLoading(target, true, 'Removingâ€¦');
 
     try {
       const response = await fetch(`/api/subscribers/${encodeURIComponent(email)}`, {
@@ -966,9 +984,304 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Analytics ----------------------------------------------------------------
+  /**
+   * Toggle the loading state for the analytics view without disturbing other panes.
+   * When we already have data rendered we keep the cards visible while the refresh happens.
+   */
+  function showAnalyticsLoading({ keepContentVisible = false } = {}) {
+    if (!analyticsLoading || !analyticsContent || !analyticsError) {
+      return;
+    }
+    analyticsError.classList.add('hidden');
+    analyticsError.textContent = '';
+    if (keepContentVisible && analyticsLoadedOnce) {
+      analyticsLoading.classList.add('hidden');
+      return;
+    }
+    analyticsLoading.classList.remove('hidden');
+    analyticsContent.classList.add('hidden');
+  }
+
+  /**
+   * Display a friendly error message when analytics cannot be fetched.
+   * We hide the content area to avoid mixing stale data with the error state.
+   */
+  function showAnalyticsError(message) {
+    if (!analyticsLoading || !analyticsContent || !analyticsError) {
+      return;
+    }
+    analyticsLoading.classList.add('hidden');
+    analyticsContent.classList.add('hidden');
+    analyticsError.textContent = message;
+    analyticsError.classList.remove('hidden');
+  }
+
+  /**
+   * Reveal the analytics cards/table/chart once fresh data has been rendered.
+   */
+  function showAnalyticsReady() {
+    if (!analyticsLoading || !analyticsContent || !analyticsError) {
+      return;
+    }
+    analyticsLoading.classList.add('hidden');
+    analyticsError.classList.add('hidden');
+    analyticsContent.classList.remove('hidden');
+  }
+
+  function formatCampaignStatus(value) {
+    if (!value) {
+      return 'Unknown';
+    }
+    const normalized = value.toString().toLowerCase();
+    if (normalized === 'success') {
+      return 'Sent';
+    }
+    if (normalized === 'partial') {
+      return 'Partial';
+    }
+    if (normalized === 'failed') {
+      return 'Failed';
+    }
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+
+  /**
+   * Render the high-level analytics cards with totals and the latest campaign summary.
+   */
+  function renderAnalyticsOverview(payload) {
+    if (!payload) {
+      return;
+    }
+    const totalSubscribers = Number(payload.totalSubscribers ?? payload.subscriberCount ?? 0);
+    if (analyticsTotalSubscribers) {
+      analyticsTotalSubscribers.textContent = totalSubscribers.toLocaleString();
+    }
+
+    const totalSent = Number(payload.totalSent ?? 0);
+    if (analyticsTotalSent) {
+      analyticsTotalSent.textContent = totalSent.toLocaleString();
+    }
+
+    if (analyticsLastCampaign && analyticsLastCampaignStatus) {
+      if (payload.lastCampaign) {
+        const delivered =
+          Number(
+            payload.lastCampaign.delivered ??
+              payload.lastCampaign.successCount ??
+              payload.lastCampaign.sentCount ??
+              0,
+          ) || 0;
+        const failed =
+          Number(payload.lastCampaign.failed ?? payload.lastCampaign.failureCount ?? 0) || 0;
+
+        analyticsLastCampaign.textContent = payload.lastCampaign.title || 'Untitled campaign';
+
+        const statusParts = [
+          formatCampaignStatus(payload.lastCampaign.status),
+          payload.lastCampaign.sentAt ? formatDate(payload.lastCampaign.sentAt) : null,
+          `${delivered.toLocaleString()} sent`,
+        ];
+        if (failed > 0) {
+          statusParts.push(`${failed.toLocaleString()} failed`);
+        }
+        analyticsLastCampaignStatus.textContent = statusParts.filter(Boolean).join(' · ');
+      } else {
+        analyticsLastCampaign.textContent = '--';
+        analyticsLastCampaignStatus.textContent = 'No campaigns yet';
+      }
+    }
+
+    renderRecentCampaigns(payload.recentCampaigns);
+    renderSubscriberGrowthChart(payload.subscriberGrowth);
+  }
+
+  /**
+   * Populate the recent campaigns table with delivery stats.
+   */
+  function renderRecentCampaigns(campaigns = []) {
+    if (!analyticsCampaignsBody) {
+      return;
+    }
+
+    analyticsCampaignsBody
+      .querySelectorAll('tr[data-analytics-row="true"]')
+      .forEach((row) => row.remove());
+
+    const hasRows = Array.isArray(campaigns) && campaigns.length > 0;
+    if (analyticsCampaignsEmpty) {
+      analyticsCampaignsEmpty.classList.toggle('hidden', hasRows);
+    }
+
+    if (!hasRows) {
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    campaigns.forEach((campaign) => {
+      const row = document.createElement('tr');
+      row.dataset.analyticsRow = 'true';
+
+      const titleCell = document.createElement('td');
+      titleCell.textContent = campaign?.title || 'Untitled campaign';
+      row.appendChild(titleCell);
+
+      const dateCell = document.createElement('td');
+      dateCell.textContent = formatDate(campaign?.sentAt);
+      row.appendChild(dateCell);
+
+      const recipientsCell = document.createElement('td');
+      const recipients = Number(campaign?.recipients ?? 0);
+      recipientsCell.textContent = recipients.toLocaleString();
+      row.appendChild(recipientsCell);
+
+      const statusCell = document.createElement('td');
+      const delivered = Number(campaign?.delivered ?? campaign?.successCount ?? 0);
+      const failed = Number(campaign?.failed ?? campaign?.failureCount ?? 0);
+      const statusLabel = formatCampaignStatus(campaign?.status);
+      if (failed > 0) {
+        statusCell.textContent = `${statusLabel} · ${delivered.toLocaleString()} sent · ${failed.toLocaleString()} failed`;
+      } else {
+        statusCell.textContent = `${statusLabel} · ${delivered.toLocaleString()} sent`;
+      }
+      row.appendChild(statusCell);
+
+      fragment.appendChild(row);
+    });
+
+    analyticsCampaignsBody.appendChild(fragment);
+  }
+
+  /**
+   * Draw or update the subscriber growth chart using Chart.js.
+   */
+  function renderSubscriberGrowthChart(growth = []) {
+    if (!analyticsGrowthCanvas || typeof window.Chart !== 'function') {
+      return;
+    }
+
+    const hasData = Array.isArray(growth) && growth.length > 0;
+    const labels = hasData ? growth.map((entry) => formatDate(entry.date)) : ['No data'];
+    const dataPoints = hasData ? growth.map((entry) => Number(entry.count) || 0) : [0];
+
+    if (analyticsChart) {
+      analyticsChart.destroy();
+      analyticsChart = null;
+    }
+
+    const context = analyticsGrowthCanvas.getContext('2d');
+    analyticsChart = new window.Chart(context, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Subscribers',
+            data: dataPoints,
+            borderColor: '#2563eb',
+            backgroundColor: 'rgba(37, 99, 235, 0.15)',
+            tension: 0.25,
+            fill: true,
+            pointRadius: 3,
+            pointBackgroundColor: '#2563eb',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label(context) {
+                const value = Number(context.parsed.y || 0);
+                return `${value.toLocaleString()} subscribers`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: { maxRotation: 0, autoSkip: true },
+          },
+          y: {
+            beginAtZero: true,
+            ticks: {
+              precision: 0,
+              callback(value) {
+                return Number(value).toLocaleString();
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  /**
+   * Fetch analytics data from the backend endpoint and render the dashboard widgets.
+   */
+  async function loadAnalytics(options = {}) {
+    if (!analyticsLoading || !analyticsContent || !analyticsError) {
+      return;
+    }
+    const { silent = false } = options;
+    showAnalyticsLoading({ keepContentVisible: silent && analyticsLoadedOnce });
+
+    try {
+      const response = await fetch('/api/analytics');
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch (parseError) {
+        payload = null;
+      }
+
+      if (!response.ok || !payload) {
+        const message =
+          payload?.message || payload?.error || 'Failed to load analytics.';
+        throw new Error(message);
+      }
+
+      renderAnalyticsOverview(payload);
+      analyticsLoadedOnce = true;
+      showAnalyticsReady();
+    } catch (error) {
+      console.error(error);
+      const fallbackMessage = error?.message || 'Failed to load analytics. Please try again.';
+      showAnalyticsError(fallbackMessage);
+    }
+  }
+
+  if (refreshAnalyticsButton) {
+    refreshAnalyticsButton.addEventListener('click', async () => {
+      setButtonLoading(refreshAnalyticsButton, true, 'Refreshing…');
+      try {
+        await loadAnalytics();
+      } finally {
+        setButtonLoading(refreshAnalyticsButton, false);
+      }
+    });
+  }
+
+  const analyticsTab = document.getElementById('analytics-tab');
+  if (analyticsTab) {
+    analyticsTab.addEventListener('click', () => {
+      if (!analyticsLoadedOnce) {
+        loadAnalytics().catch(() => {});
+      }
+    });
+  }
+
   if (logoutButton) {
     logoutButton.addEventListener('click', async () => {
-      setButtonLoading(logoutButton, true, 'Logging out…');
+      setButtonLoading(logoutButton, true, 'Logging outâ€¦');
       try {
         const response = await fetch('/logout', {
           method: 'POST',
@@ -1004,3 +1317,5 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   activateView('compose-view');
 });
+
+

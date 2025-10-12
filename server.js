@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Production-ready Express server for the newsletter application.
  * Handles subscriber management, Cloudinary-backed image uploads,
  * sanitized rich text newsletters, and delivery via Resend.
@@ -36,7 +36,9 @@ const VERIFICATION_MAX_ATTEMPTS = 3;
 const ANALYTICS_INDEX_KEY = 'newsletter:analytics:index';
 const ANALYTICS_PREFIX = 'newsletter:analytics:campaign:';
 const ANALYTICS_AGGREGATE_KEY = 'newsletter:analytics:aggregate';
-const NEWSLETTER_ARCHIVE_PREFIX = 'newsletter:archive:';
+const NEWSLETTER_ARCHIVE_PREFIX = 'newsletter:archive:';\nconst SUBSCRIBER_GROWTH_KEY = 'newsletter:analytics:subscriber-growth';\nconst MAX_GROWTH_POINTS = 365;
+const CAMPAIGN_ZSET_KEY = 'newsletter:campaigns';
+const CAMPAIGN_SUMMARY_KEY_PREFIX = 'newsletter:campaigns:';
 const CLICK_TRACKING_PATH = '/t/click';
 const OPEN_TRACKING_PATH = '/t/open';
 const TRACKING_PIXEL_FILENAME = 'pixel.gif';
@@ -44,7 +46,7 @@ const FLAGGED_SUBSCRIBERS_SET_KEY = 'newsletter:flagged-subscribers';
 const BOUNCE_LOG_PREFIX = 'newsletter:bounce:';
 const DEFAULT_PHYSICAL_ADDRESS =
   process.env.MAILING_ADDRESS ||
-  'Example Newsletter · 123 Main Street · Suite 100 · Anytown, USA';
+  'Example Newsletter Â· 123 Main Street Â· Suite 100 Â· Anytown, USA';
 const ENABLE_OPEN_TRACKING = process.env.ENABLE_OPEN_TRACKING !== 'false';
 const ENABLE_CLICK_TRACKING = process.env.ENABLE_CLICK_TRACKING !== 'false';
 const WARMUP_MODE_ENABLED = process.env.WARMUP_MODE === 'true';
@@ -77,6 +79,7 @@ const inMemoryAnalyticsStore = {
   aggregate: {
     sent: 0,
     delivered: 0,
+    failed: 0,
     opens: 0,
     clicks: 0,
     bounces: 0,
@@ -86,6 +89,12 @@ const inMemoryAnalyticsStore = {
   index: [],
   opens: new Map(),
   clicks: new Map(),
+  growth: [],
+  archives: new Map(),
+};
+const inMemoryCampaignStore = {
+  summaries: new Map(),
+  index: [],
 };
 const warmupState = {
   dayKey: null,
@@ -121,7 +130,9 @@ let storageLastOperationDetails = null;
 
   if (missingKvEnv.length === 0) {
     try {
-      const { createClient } = require('@vercel/kv');
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const { createClient } = require('@vercel/kv');
       kvClient = createClient({
         url: process.env.KV_REST_API_URL,
         token: process.env.KV_REST_API_TOKEN,
@@ -182,7 +193,9 @@ function initializeSessionStore() {
 
   if (process.env.KV_URL) {
     try {
-      redisSessionClient = createRedisClient({
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+redisSessionClient = createRedisClient({
         url: process.env.KV_URL,
         socket: {
           reconnectStrategy: (retries) => Math.min(retries * 200, 2000),
@@ -309,7 +322,9 @@ if (adminPasswordLooksHashed) {
 const loginTemplatePath = path.join(__dirname, 'public', 'login.html');
 let loginTemplate = '';
 try {
-  loginTemplate = fs.readFileSync(loginTemplatePath, 'utf8');
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+loginTemplate = fs.readFileSync(loginTemplatePath, 'utf8');
 } catch (error) {
   logger.error('Failed to load login template.', { message: error?.message });
   loginTemplate = '';
@@ -451,10 +466,19 @@ function generateNewsletterId() {
   return crypto.randomBytes(16).toString('hex');
 }
 
+function generateCampaignId() {
+  const base = Date.now();
+  const suffix = crypto.randomBytes(2).toString('hex');
+  return `${base}-${suffix}`;
+}
+  return crypto.randomBytes(16).toString('hex');
+}
+
 function createEmptyMetricSnapshot() {
   return {
     sent: 0,
     delivered: 0,
+    failed: 0,
     opens: 0,
     clicks: 0,
     bounces: 0,
@@ -493,7 +517,9 @@ async function getAggregateMetrics() {
       return createEmptyMetricSnapshot();
     }
     try {
-      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+return typeof raw === 'string' ? JSON.parse(raw) : raw;
     } catch (error) {
       logger.warn('Failed to parse aggregate analytics payload; resetting.', {
         message: error?.message,
@@ -529,7 +555,9 @@ async function getCampaignRecord(newsletterId) {
       return null;
     }
     try {
-      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+return typeof raw === 'string' ? JSON.parse(raw) : raw;
     } catch (error) {
       logger.warn('Failed to parse campaign analytics payload.', {
         message: error?.message,
@@ -718,7 +746,9 @@ async function resetWarmupCounterIfNeeded() {
     let state = null;
     if (raw) {
       try {
-        state = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+state = typeof raw === 'string' ? JSON.parse(raw) : raw;
       } catch (error) {
         state = null;
       }
@@ -750,7 +780,9 @@ async function updateWarmupCounter(delta) {
     let state = null;
     if (raw) {
       try {
-        state = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+state = typeof raw === 'string' ? JSON.parse(raw) : raw;
       } catch (error) {
         state = null;
       }
@@ -773,6 +805,179 @@ function computeWarmupLimit(historyCount = 0) {
   const base = Math.max(1, WARMUP_INITIAL_LIMIT);
   const growthSteps = Math.max(0, Math.floor(historyCount / Math.max(1, WARMUP_GROWTH_DAYS)));
   return base + growthSteps * Math.max(1, WARMUP_GROWTH_INCREMENT);
+}
+
+function buildDayKey(date) {
+  const current = date instanceof Date ? date : new Date(date);
+  return `${current.getUTCFullYear()}-${String(current.getUTCMonth() + 1).padStart(2, '0')}-${String(
+    current.getUTCDate(),
+  ).padStart(2, '0')}`;
+}
+
+function normalizeGrowthHistory(history = []) {
+  return history
+    .filter((entry) => entry && typeof entry.date === 'string')
+    .map((entry) => ({
+      date: entry.date,
+      count: Number(entry.count) || 0,
+      recordedAt: entry.recordedAt || entry.timestamp || new Date().toISOString(),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function loadSubscriberGrowthHistory(limit = MAX_GROWTH_POINTS) {
+  if (analyticsUsesKv()) {
+    const raw = await withKvRetries(
+      () => kvClient.get(SUBSCRIBER_GROWTH_KEY),
+      'analytics-growth-get',
+    );
+    const parsed = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : [];
+    const normalized = normalizeGrowthHistory(Array.isArray(parsed) ? parsed : []);
+    return normalized.slice(-Math.max(limit, 0));
+  }
+  const normalized = normalizeGrowthHistory(inMemoryAnalyticsStore.growth);
+  return normalized.slice(-Math.max(limit, 0));
+}
+
+async function saveSubscriberGrowthHistory(history) {
+  const trimmed = normalizeGrowthHistory(history).slice(-MAX_GROWTH_POINTS);
+  if (analyticsUsesKv()) {
+    await withKvRetries(
+      () => kvClient.set(SUBSCRIBER_GROWTH_KEY, JSON.stringify(trimmed)),
+      'analytics-growth-set',
+    );
+  } else {
+    inMemoryAnalyticsStore.growth = trimmed;
+  }
+  return trimmed;
+}
+
+async function recordSubscriberGrowthSnapshot(count, timestamp = new Date()) {
+  if (typeof count !== 'number' || Number.isNaN(count) || count < 0) {
+    return [];
+  }
+  const iso = new Date(timestamp).toISOString();
+  const dayKey = buildDayKey(timestamp);
+  const history = await loadSubscriberGrowthHistory();
+  const nextHistory = [...history];
+  const existingIndex = nextHistory.findIndex((entry) => entry.date === dayKey);
+  if (existingIndex >= 0) {
+    nextHistory[existingIndex] = { date: dayKey, count, recordedAt: iso };
+  } else {
+    nextHistory.push({ date: dayKey, count, recordedAt: iso });
+  }
+  return saveSubscriberGrowthHistory(nextHistory);
+}
+
+async function ensureSubscriberGrowthSnapshot(count) {
+  const history = await loadSubscriberGrowthHistory();
+  const lastEntry = history[history.length - 1];
+  if (!lastEntry || lastEntry.count !== count) {
+    await recordSubscriberGrowthSnapshot(count);
+  }
+}
+
+async function getSubscriberGrowthWindow(days = 30) {
+  const history = await loadSubscriberGrowthHistory();
+  if (!history.length) {
+    return history;
+  }
+  const cutoff = new Date();
+  cutoff.setUTCDate(cutoff.getUTCDate() - Math.max(days - 1, 0));
+  const cutoffKey = buildDayKey(cutoff);
+  return history.filter((entry) => entry.date >= cutoffKey);
+}
+
+/**
+ * Persist a snapshot of campaign delivery stats so the analytics API can respond quickly.
+ * The payload mirrors the frontend cards/table, so we store both neutral names (delivered/failed)
+ * and explicit success/failure counts for readability when the record is fetched later.
+ */
+async function storeCampaignSummary(record) {
+  if (!record?.id) {
+    return;
+  }
+  const deliveredCount = Math.max(0, Number(record.delivered ?? record.successCount) || 0);
+  const failedCount = Math.max(0, Number(record.failed ?? record.failureCount) || 0);
+  const safeRecord = {
+    id: String(record.id),
+    title: record.title || 'Untitled campaign',
+    sentAt: record.sentAt || new Date().toISOString(),
+    recipients: Math.max(0, Number(record.recipients) || 0),
+    delivered: deliveredCount,
+    failed: failedCount,
+    successCount: deliveredCount,
+    failureCount: failedCount,
+    status: record.status || 'unknown',
+  };
+  if (analyticsUsesKv()) {
+    const score = Date.parse(safeRecord.sentAt) || Date.now();
+    await withKvRetries(
+      () => kvClient.set(`${CAMPAIGN_SUMMARY_KEY_PREFIX}${safeRecord.id}`, JSON.stringify(safeRecord)),
+      'campaign-summary-set',
+    );
+    await withKvRetries(
+      () => kvClient.zadd(CAMPAIGN_ZSET_KEY, { score, member: safeRecord.id }),
+      'campaign-summary-zadd',
+    );
+    return;
+  }
+  inMemoryCampaignStore.summaries.set(safeRecord.id, safeRecord);
+  inMemoryCampaignStore.index = inMemoryCampaignStore.index.filter((id) => id !== safeRecord.id);
+  inMemoryCampaignStore.index.push(safeRecord.id);
+  if (inMemoryCampaignStore.index.length > 100) {
+    const removedId = inMemoryCampaignStore.index.shift();
+    if (removedId) {
+      inMemoryCampaignStore.summaries.delete(removedId);
+    }
+  }
+}
+
+async function listRecentCampaignSummaries(limit = 10) {
+  if (analyticsUsesKv()) {
+    const ids = await withKvRetries(
+      () => kvClient.zrange(CAMPAIGN_ZSET_KEY, -limit, -1, { rev: true }),
+      'campaign-summary-zrange',
+    );
+    if (!ids || !ids.length) {
+      return [];
+    }
+    const records = [];
+    for (const id of ids) {
+      // eslint-disable-next-line no-await-in-loop
+      const raw = await withKvRetries(
+        () => kvClient.get(`${CAMPAIGN_SUMMARY_KEY_PREFIX}${id}`),
+        'campaign-summary-get',
+      );
+      if (!raw) {
+        continue;
+      }
+      try {
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        records.push(parsed);
+      } catch (error) {
+        logger.warn('Failed to parse stored campaign summary.', { id, message: error?.message });
+      }
+    }
+    return records;
+  }
+  const recentIds = inMemoryCampaignStore.index.slice(-limit).reverse();
+  return recentIds
+    .map((id) => inMemoryCampaignStore.summaries.get(id))
+    .filter(Boolean);
+}
+
+async function countCampaignSummaries() {
+  if (analyticsUsesKv()) {
+    const count = await withKvRetries(
+      () => kvClient.zcard(CAMPAIGN_ZSET_KEY),
+      'campaign-summary-count',
+    );
+    return Number(count) || 0;
+  }
+  return inMemoryCampaignStore.index.length;
 }
 
 async function flagSubscriberEmail(email, reason = '') {
@@ -932,7 +1137,9 @@ async function withKvRetries(action, description) {
   let attempt = 0;
   while (attempt <= STORAGE_RETRY_DELAYS_MS.length) {
     try {
-      const result = await action();
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const result = await action();
       kvConnectionHealthy = true;
       return result;
     } catch (error) {
@@ -962,7 +1169,9 @@ function parseStoredValue(value) {
     (trimmed.startsWith('[') && trimmed.endsWith(']'))
   ) {
     try {
-      return JSON.parse(trimmed);
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+return JSON.parse(trimmed);
     } catch {
       return value;
     }
@@ -989,7 +1198,9 @@ async function fetchSubscriberRecord(normalizedEmail) {
 
   if (subscriberStoreMode === 'kv' && kvClient) {
     try {
-      const hash = await withKvRetries(
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const hash = await withKvRetries(
         () => kvClient.hgetall(subscriberHashKey(normalizedEmail)),
         'hgetall-subscriber',
       );
@@ -1015,7 +1226,9 @@ async function fetchSubscriberRecord(normalizedEmail) {
 async function verifySubscriberPersistence(normalizedEmail) {
   for (let attempt = 1; attempt <= VERIFICATION_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const record = await fetchSubscriberRecord(normalizedEmail);
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const record = await fetchSubscriberRecord(normalizedEmail);
       if (record) {
         logSubscriberEvent('info', 'Subscriber verification succeeded.', {
           email: normalizedEmail,
@@ -1047,7 +1260,9 @@ async function verifySubscriberPersistence(normalizedEmail) {
 async function verifySubscriberRemoval(normalizedEmail) {
   for (let attempt = 1; attempt <= VERIFICATION_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const record = await fetchSubscriberRecord(normalizedEmail);
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const record = await fetchSubscriberRecord(normalizedEmail);
       if (!record) {
         logSubscriberEvent('info', 'Subscriber removal verified.', {
           email: normalizedEmail,
@@ -1080,7 +1295,9 @@ async function getSubscriberCount(options = {}) {
   const { record = true } = options;
   if (subscriberStoreMode === 'kv' && kvClient) {
     try {
-      const count = await withKvRetries(
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const count = await withKvRetries(
         () => kvClient.scard(SUBSCRIBERS_SET_KEY),
         'scard-subscribers',
       );
@@ -1116,7 +1333,9 @@ async function verifyStorageConnection() {
   }
 
   try {
-    const probeKey = `${SUBSCRIBERS_SET_KEY}:probe:${Date.now()}`;
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const probeKey = `${SUBSCRIBERS_SET_KEY}:probe:${Date.now()}`;
     await withKvRetries(
       () => kvClient.set(probeKey, `ping:${Date.now()}`, { ex: 60 }),
       'set-probe',
@@ -1185,7 +1404,9 @@ async function sendWithResend(payload, context = {}) {
   });
 
   try {
-    const { data, error } = await resendClient.emails.send(normalizedPayload);
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const { data, error } = await resendClient.emails.send(normalizedPayload);
     const durationMs = Math.round(performance.now() - start);
 
     if (error) {
@@ -1344,7 +1565,9 @@ function buildEmailTemplate(title, content, previewText = '', unsubscribeLink = 
  */
 async function verifyResendCredentials() {
   try {
-    await resendClient.apiKeys.list();
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+await resendClient.apiKeys.list();
     resendStatus = {
       valid: true,
       checkedAt: new Date().toISOString(),
@@ -1578,7 +1801,9 @@ app.post('/login', loginLimiter, csrfProtection, async (req, res) => {
 
   let passwordMatches = false;
   try {
-    passwordMatches = await bcrypt.compare(password, adminPasswordHash);
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+passwordMatches = await bcrypt.compare(password, adminPasswordHash);
   } catch (error) {
     logger.error('Bcrypt comparison failed during login.', {
       message: error?.message,
@@ -1713,7 +1938,9 @@ function normalizeRecordShape(rawRecord = {}) {
 async function getSubscribers() {
   if (subscriberStoreMode === 'kv' && kvClient) {
     try {
-      const emails = await withKvRetries(
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const emails = await withKvRetries(
         () => kvClient.smembers(SUBSCRIBERS_SET_KEY),
         'smembers-subscribers',
       );
@@ -1727,7 +1954,9 @@ async function getSubscribers() {
       const records = await Promise.all(
         emails.map(async (normalizedEmail) => {
           try {
-            const hash = await withKvRetries(
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const hash = await withKvRetries(
               () => kvClient.hgetall(subscriberHashKey(normalizedEmail)),
               'hgetall-subscriber',
             );
@@ -1797,7 +2026,9 @@ async function addSubscriber(email, name = null, metadata = {}) {
 
   if (subscriberStoreMode === 'kv' && kvClient) {
     try {
-      const kvPayload = {};
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const kvPayload = {};
       for (const [key, value] of Object.entries(record)) {
         if (value === undefined || value === null) {
           continue;
@@ -1811,7 +2042,9 @@ async function addSubscriber(email, name = null, metadata = {}) {
 
       await withKvRetries(() => kvClient.sadd(SUBSCRIBERS_SET_KEY, normalized), 'sadd-subscriber');
       try {
-        await withKvRetries(
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+await withKvRetries(
           () => kvClient.hset(subscriberHashKey(normalized), kvPayload),
           'hset-subscriber',
         );
@@ -1839,7 +2072,9 @@ async function addSubscriber(email, name = null, metadata = {}) {
   let countAfterAdd;
   if (subscriberStoreMode === 'kv' && kvClient) {
     try {
-      const total = await withKvRetries(
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const total = await withKvRetries(
         () => kvClient.scard(SUBSCRIBERS_SET_KEY),
         'scard-after-add',
       );
@@ -1875,7 +2110,9 @@ async function removeSubscriber(email) {
 
   if (subscriberStoreMode === 'kv' && kvClient) {
     try {
-      const removed = await withKvRetries(
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const removed = await withKvRetries(
         () => kvClient.srem(SUBSCRIBERS_SET_KEY, normalized),
         'srem-subscriber',
       );
@@ -1937,7 +2174,9 @@ async function subscriberExists(email) {
 
   if (subscriberStoreMode === 'kv' && kvClient) {
     try {
-      const exists = await withKvRetries(
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const exists = await withKvRetries(
         () => kvClient.sismember(SUBSCRIBERS_SET_KEY, normalized),
         'sismember-subscriber',
       );
@@ -1998,8 +2237,12 @@ async function sendNewsletterToSubscriber(subscriber, options) {
   );
 
   const plainTextBody = `${
-    previewSnippet ? `${previewSnippet}\n\n` : ''
-  }${strippedContent}\n\nUnsubscribe: ${unsubscribeLink}`;
+    previewSnippet ? `${previewSnippet}
+
+` : ''
+  }${strippedContent}
+
+Unsubscribe: ${unsubscribeLink}`;
 
   const payload = {
     from: senderEmail,
@@ -2162,7 +2405,9 @@ app.get('/api/session', ensureAuthenticatedApi, (req, res) => {
  */
 app.get('/api/subscribers', ensureAuthenticatedApi, async (_, res) => {
   try {
-    const subscribers = await getSubscribers();
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const subscribers = await getSubscribers();
     res.json({
       storage: subscriberStoreMode,
       kvConnectionHealthy,
@@ -2199,7 +2444,9 @@ app.post('/api/subscribers', ensureAuthenticatedApi, async (req, res) => {
   const normalizedEmail = normalizeEmail(canonicalEmail);
 
   try {
-    if (await subscriberExists(canonicalEmail)) {
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+if (await subscriberExists(canonicalEmail)) {
       logSubscriberEvent('warn', 'Attempt to add duplicate subscriber.', { email: normalizedEmail });
       res.status(409).json({
         message: 'This email is already subscribed.',
@@ -2234,6 +2481,8 @@ app.post('/api/subscribers', ensureAuthenticatedApi, async (req, res) => {
       count: totalCount,
       verified: verification.verified,
     });
+
+    await recordSubscriberGrowthSnapshot(totalCount);
 
     res.status(201).json({
       subscriber: verification.record || newSubscriber,
@@ -2278,7 +2527,9 @@ app.delete('/api/subscribers/:encodedEmail', ensureAuthenticatedApi, async (req,
   }
 
   try {
-    const removed = await removeSubscriber(normalizedTarget);
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const removed = await removeSubscriber(normalizedTarget);
     if (!removed) {
       res.status(404).json({
         message: 'Subscriber not found.',
@@ -2311,6 +2562,8 @@ app.delete('/api/subscribers/:encodedEmail', ensureAuthenticatedApi, async (req,
       count: totalCount,
       confirmed: verification.confirmed,
     });
+
+    await recordSubscriberGrowthSnapshot(totalCount);
 
     res.status(200).json({
       message: 'Subscriber removed.',
@@ -2365,7 +2618,9 @@ app.post('/api/public/subscribe', async (req, res) => {
   const normalizedEmail = normalizeEmail(email);
   const canonicalEmail = extractEmailAddress(email);
   try {
-    if (await subscriberExists(canonicalEmail)) {
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+if (await subscriberExists(canonicalEmail)) {
       logger.info('Public subscribe duplicate attempt.', { ip, email: normalizedEmail });
       res.status(200).json({
         success: false,
@@ -2403,6 +2658,8 @@ app.post('/api/public/subscribe', async (req, res) => {
       count: totalCount,
       verified: verification.verified,
     });
+
+    await recordSubscriberGrowthSnapshot(totalCount);
 
     res.json({
       success: true,
@@ -2469,7 +2726,9 @@ app.post('/api/public/unsubscribe', async (req, res) => {
   const canonicalEmail = extractEmailAddress(email);
 
   try {
-    const removed = await removeSubscriber(canonicalEmail);
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const removed = await removeSubscriber(canonicalEmail);
     if (!removed) {
       logger.info('Public unsubscribe not found.', { ip, email: normalizedEmail });
       recordSuspiciousAttempt(ip, 'unsubscribe-not-found', { email: normalizedEmail });
@@ -2507,6 +2766,7 @@ app.post('/api/public/unsubscribe', async (req, res) => {
       count: totalCount,
       confirmed: verification.confirmed,
     });
+    await recordSubscriberGrowthSnapshot(totalCount);
     res.json({
       success: true,
       message: 'Successfully unsubscribed',
@@ -2581,7 +2841,9 @@ app.post(
   }
 
   try {
-    const uploadResult = await cloudinary.uploader.upload(
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const uploadResult = await cloudinary.uploader.upload(
       `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`,
       {
         folder: 'newsletter/uploads',
@@ -2635,6 +2897,8 @@ app.post('/api/send-newsletter', ensureAuthenticatedApi, async (req, res) => {
   }
 
   try {
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
     const sanitizedContent = sanitizeHtml(content, sanitizerOptions);
     const subscribers = await getSubscribers();
 
@@ -2691,6 +2955,7 @@ app.post('/api/send-newsletter', ensureAuthenticatedApi, async (req, res) => {
     });
 
     const summary = {
+      id: campaignId,
       total: totalSubscribers,
       batchSize: RESEND_BATCH_SIZE,
       batchesEstimated,
@@ -2700,7 +2965,7 @@ app.post('/api/send-newsletter', ensureAuthenticatedApi, async (req, res) => {
       failures: [],
       skipped: [],
       progressUpdates: [],
-      startedAt: new Date().toISOString(),
+      startedAt: sendStartedAt.toISOString(),
       estimatedDurationMs,
     };
 
@@ -2797,23 +3062,48 @@ app.post('/api/send-newsletter', ensureAuthenticatedApi, async (req, res) => {
     summary.successRate =
       processed > 0 ? Number((summary.sentCount / processed).toFixed(4)) : 0;
 
+    const campaignStatus =
+      summary.failedCount === 0
+        ? 'success'
+        : summary.sentCount === 0
+        ? 'failed'
+        : 'partial';
+    summary.status = campaignStatus;
+
     logger.info('Newsletter send completed.', {
       totalSubscribers,
       sent: summary.sentCount,
       failed: summary.failedCount,
       elapsedMs,
       batchesProcessed: summary.completedBatches,
-    });
+    });\n    try {
+      await storeCampaignSummary({
+        id: campaignId,
+        title,
+        sentAt: summary.completedAt,
+        recipients: totalSubscribers,
+        delivered: summary.sentCount,
+        failed: summary.failedCount,
+        successCount: summary.sentCount,
+        failureCount: summary.failedCount,
+        status: campaignStatus,
+      });
+      const aggregateMetrics = await getAggregateMetrics();
+      aggregateMetrics.sent = Math.max(0, (aggregateMetrics.sent || 0) + totalSubscribers);
+      aggregateMetrics.delivered = Math.max(0, (aggregateMetrics.delivered || 0) + summary.sentCount);
+      aggregateMetrics.failed = Math.max(0, (aggregateMetrics.failed || 0) + summary.failedCount);
+      await saveAggregateMetrics(aggregateMetrics);
+    } catch (analyticsError) {
+      logger.warn('Failed to persist campaign summary analytics.', {
+        message: analyticsError?.message,
+      });
+    }
 
     lastEmailDiagnostic = {
       timestamp: new Date().toISOString(),
-      status:
-        summary.failedCount === 0
-          ? 'success'
-          : summary.sentCount === 0
-          ? 'error'
-          : 'partial',
+      status: campaignStatus === 'failed' ? 'error' : campaignStatus,
       context: 'send-newsletter',
+      campaignId,
       recipients: subscribers
         .map((subscriber) => normalizeEmail(subscriber.email))
         .filter(Boolean),
@@ -2834,6 +3124,7 @@ app.post('/api/send-newsletter', ensureAuthenticatedApi, async (req, res) => {
         summary.failedCount > 0
           ? 'Newsletter sent with some issues.'
           : 'Newsletter sent successfully with rate limiting.',
+      campaignId,
       summary,
     });
   } catch (error) {
@@ -2883,6 +3174,41 @@ app.post('/api/send-newsletter', ensureAuthenticatedApi, async (req, res) => {
   }
 });
 
+// Lightweight analytics endpoint consumed by the dashboard to populate cards, tables, and charts.
+app.get('/api/analytics', ensureAuthenticatedApi, async (req, res) => {
+  try {
+    const subscriberCount = await getSubscriberCount({ record: false });
+    await ensureSubscriberGrowthSnapshot(subscriberCount);
+
+    const [recentCampaigns, totalCampaigns, aggregateMetrics, growthWindow] = await Promise.all([
+      listRecentCampaignSummaries(10),
+      countCampaignSummaries(),
+      getAggregateMetrics(),
+      getSubscriberGrowthWindow(30),
+    ]);
+
+    const lastCampaign = recentCampaigns.length ? recentCampaigns[0] : null;
+
+    res.json({
+      totalSubscribers: subscriberCount,
+      totalCampaignsSent: totalCampaigns,
+      totalSent: aggregateMetrics.delivered || 0,
+      lastCampaign,
+      recentCampaigns,
+      subscriberGrowth: growthWindow,
+    });
+  } catch (error) {
+    logger.error('Analytics summary request failed.', {
+      message: error?.message,
+      stack: error?.stack,
+    });
+    res.status(500).json({
+      message: 'Failed to load analytics summary.',
+      details: error?.message,
+    });
+  }
+});
+
 /**
  * Send a single test email for diagnostics purposes.
  */
@@ -2921,7 +3247,9 @@ app.post('/api/test-email', ensureAuthenticatedApi, async (req, res) => {
   const unsubscribeLink = `${appUrl.replace(/\/$/, '')}/unsubscribe?email=${encodeURIComponent(
     targetEmail,
   )}`;
-  const plainTextBody = `${stripHtml(sanitizedHtmlBody)}\n\nUnsubscribe: ${unsubscribeLink}`;
+  const plainTextBody = `${stripHtml(sanitizedHtmlBody)}
+
+Unsubscribe: ${unsubscribeLink}`;
 
   const emailPayload = {
     from: senderEmail,
@@ -3035,7 +3363,9 @@ app.post('/api/test-email', ensureAuthenticatedApi, async (req, res) => {
 
 app.get('/api/debug/storage', ensureAuthenticatedApi, async (req, res) => {
   try {
-    const subscribers = await getSubscribers();
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const subscribers = await getSubscribers();
     res.json({
       storage: subscriberStoreMode,
       kvConnectionHealthy,
@@ -3063,14 +3393,18 @@ app.get('/api/debug/storage', ensureAuthenticatedApi, async (req, res) => {
  */
 app.get('/api/diagnostics', ensureAuthenticatedApi, async (_, res) => {
   try {
-    const subscribers = await getSubscribers();
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const subscribers = await getSubscribers();
     let cloudinaryStatus = {
       ok: true,
       message: 'Connected',
     };
 
     try {
-      const ping = await cloudinary.api.ping();
+    const sendStartedAt = new Date();
+    const campaignId = generateCampaignId();
+const ping = await cloudinary.api.ping();
       cloudinaryStatus = {
         ok: true,
         message: 'Connected',
@@ -3175,3 +3509,15 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   logger.info(`Newsletter app running at http://localhost:${PORT}`);
 });
+
+
+
+
+
+
+
+
+
+
+
+
