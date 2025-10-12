@@ -36,7 +36,9 @@ const VERIFICATION_MAX_ATTEMPTS = 3;
 const ANALYTICS_INDEX_KEY = 'newsletter:analytics:index';
 const ANALYTICS_PREFIX = 'newsletter:analytics:campaign:';
 const ANALYTICS_AGGREGATE_KEY = 'newsletter:analytics:aggregate';
-const NEWSLETTER_ARCHIVE_PREFIX = 'newsletter:archive:';\nconst SUBSCRIBER_GROWTH_KEY = 'newsletter:analytics:subscriber-growth';\nconst MAX_GROWTH_POINTS = 365;
+const NEWSLETTER_ARCHIVE_PREFIX = 'newsletter:archive:';
+const SUBSCRIBER_GROWTH_KEY = 'newsletter:analytics:subscriber-growth';
+const MAX_GROWTH_POINTS = 365;
 const CAMPAIGN_ZSET_KEY = 'newsletter:campaigns';
 const CAMPAIGN_SUMMARY_KEY_PREFIX = 'newsletter:campaigns:';
 const CLICK_TRACKING_PATH = '/t/click';
@@ -3076,7 +3078,8 @@ app.post('/api/send-newsletter', ensureAuthenticatedApi, async (req, res) => {
       failed: summary.failedCount,
       elapsedMs,
       batchesProcessed: summary.completedBatches,
-    });\n    try {
+    });
+    try {
       await storeCampaignSummary({
         id: campaignId,
         title,
