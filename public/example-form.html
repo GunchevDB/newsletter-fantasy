@@ -3,194 +3,550 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Newsletter Subscription Example</title>
+    <title>Newsletter Subscription</title>
     <style>
       :root {
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        color: #111827;
-        background: #f9fafb;
+        color-scheme: dark;
+        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        --bg: #05060a;
+        --bg-muted: rgba(23, 24, 32, 0.9);
+        --bg-transparent: rgba(5, 6, 10, 0.4);
+        --border: rgba(255, 255, 255, 0.08);
+        --input-bg: rgba(255, 255, 255, 0.08);
+        --input-bg-focus: rgba(255, 255, 255, 0.12);
+        --text-primary: rgba(255, 255, 255, 0.92);
+        --text-muted: rgba(255, 255, 255, 0.62);
+        --success: #4ade80;
+        --error: #f87171;
+        --accent: #c8a2ff;
+        --accent-soft: rgba(200, 162, 255, 0.18);
+        --focus: rgba(200, 162, 255, 0.32);
+        --radius-lg: 24px;
+        --radius-md: 14px;
+        --transition: 160ms ease;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
       }
 
       body {
         margin: 0;
-        padding: 40px 16px;
+        min-height: 100vh;
         display: flex;
         justify-content: center;
+        align-items: center;
+        padding: clamp(32px, 8vw, 64px) 16px;
+        background: radial-gradient(circle at top, rgba(200, 162, 255, 0.16), transparent 55%),
+          radial-gradient(circle at bottom, rgba(124, 58, 237, 0.14), transparent 45%),
+          var(--bg);
+        color: var(--text-primary);
       }
 
-      .container {
-        max-width: 560px;
-        width: 100%;
-        background: #ffffff;
-        border-radius: 16px;
-        padding: 32px;
-        box-shadow: 0 20px 45px rgba(15, 23, 42, 0.15);
+      body.surface-transparent {
+        background: transparent;
       }
 
-      h1 {
-        margin-top: 0;
-        font-size: 28px;
-        color: #0f172a;
+      main {
+        display: grid;
+        gap: clamp(28px, 6vw, 40px);
+        width: min(880px, 100%);
       }
 
-      p {
+      .form-wrapper {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        padding: clamp(24px, 5vw, 32px);
+        border-radius: var(--radius-lg);
+        background: var(--bg-muted);
+        border: 1px solid var(--border);
+        box-shadow: 0 40px 120px rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(18px);
+      }
+
+      body.surface-transparent .form-wrapper {
+        background: var(--bg-transparent);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: none;
+      }
+
+      .form-wrapper header {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .form-wrapper h1 {
+        margin: 0;
+        font-size: clamp(1.25rem, 3vw, 1.6rem);
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+
+      .form-wrapper p {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.95rem;
         line-height: 1.6;
-        color: #334155;
       }
 
       form {
-        margin-top: 24px;
         display: grid;
-        gap: 16px;
+        gap: 18px;
+      }
+
+      .field {
+        display: grid;
+        gap: 10px;
       }
 
       label {
-        display: block;
-        font-weight: 600;
-        margin-bottom: 6px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.76);
       }
 
       input[type='text'],
       input[type='email'] {
         width: 100%;
-        padding: 12px 14px;
-        border-radius: 8px;
-        border: 1px solid #cbd5f5;
-        font-size: 16px;
-        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        padding: 14px 16px;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: var(--input-bg);
+        color: var(--text-primary);
+        font-size: 1rem;
+        transition: border var(--transition), background var(--transition), box-shadow var(--transition);
+      }
+
+      input[type='text']::placeholder,
+      input[type='email']::placeholder {
+        color: rgba(255, 255, 255, 0.38);
       }
 
       input[type='text']:focus,
       input[type='email']:focus {
         outline: none;
-        border-color: #2563eb;
-        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+        background: var(--input-bg-focus);
+        border-color: var(--accent);
+        box-shadow: 0 0 0 4px var(--focus);
       }
 
-      .honeypot {
-        position: absolute;
-        left: -9999px;
-        opacity: 0;
-        pointer-events: none;
+      .hint {
+        font-size: 0.85rem;
+        color: rgba(255, 255, 255, 0.52);
       }
 
       button {
-        padding: 12px 16px;
-        border: none;
+        position: relative;
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 20px;
         border-radius: 999px;
-        font-size: 16px;
+        border: none;
+        font-size: 1rem;
         font-weight: 600;
-        background: linear-gradient(135deg, #2563eb, #4338ca);
-        color: #ffffff;
+        letter-spacing: 0.01em;
+        color: #0b0416;
+        background: linear-gradient(135deg, var(--accent), #a984ff);
         cursor: pointer;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        transition: transform var(--transition), box-shadow var(--transition), opacity var(--transition);
+        box-shadow: 0 25px 45px rgba(200, 162, 255, 0.35);
       }
 
-      button[disabled] {
+      button:hover:not(.is-loading):not(:disabled) {
+        transform: translateY(-1px) scale(1.01);
+        box-shadow: 0 35px 60px rgba(200, 162, 255, 0.4);
+      }
+
+      button:disabled {
         opacity: 0.65;
         cursor: not-allowed;
         transform: none;
         box-shadow: none;
       }
 
-      button:not([disabled]):hover {
-        transform: translateY(-1px);
-        box-shadow: 0 12px 25px rgba(59, 130, 246, 0.35);
+      button::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: rgba(255, 255, 255, 0.28);
+        opacity: 0;
+        transition: opacity var(--transition);
+      }
+
+      button:focus-visible::after {
+        opacity: 0.35;
+      }
+
+      button .loader {
+        display: none;
+      }
+
+      button.is-loading .loader {
+        display: inline-flex;
+        width: 1rem;
+        height: 1rem;
+        border-radius: 50%;
+        border: 2px solid rgba(12, 6, 24, 0.35);
+        border-top-color: rgba(12, 6, 24, 0.85);
+        animation: spin 640ms linear infinite;
+      }
+
+      button.is-loading span {
+        opacity: 0.7;
       }
 
       .status {
         min-height: 24px;
+        font-size: 0.92rem;
+        font-weight: 500;
+        color: var(--text-muted);
+        transition: color var(--transition), transform var(--transition);
+      }
+
+      .status[data-state='success'] {
+        color: var(--success);
+      }
+
+      .status[data-state='error'] {
+        color: var(--error);
+      }
+
+      .status[data-visible='true'] {
+        animation: fade-in 220ms ease;
+      }
+
+      .integration {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: clamp(20px, 4vw, 28px);
+        display: grid;
+        gap: 18px;
+      }
+
+      .integration h2 {
+        margin: 0;
+        font-size: 1.05rem;
         font-weight: 600;
+        color: var(--text-primary);
       }
 
-      .status.success {
-        color: #047857;
+      details {
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.03);
+        padding: 14px 18px;
+        transition: border var(--transition), background var(--transition);
       }
 
-      .status.error {
-        color: #b91c1c;
+      details[open] {
+        border-color: rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      summary {
+        cursor: pointer;
+        font-weight: 500;
+        color: var(--text-primary);
+      }
+
+      pre {
+        margin: 12px 0 0;
+        padding: 16px;
+        border-radius: var(--radius-md);
+        background: rgba(13, 13, 20, 0.95);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.82);
+        overflow-x: auto;
+        font-size: 0.85rem;
+        line-height: 1.6;
       }
 
       code {
-        background: rgba(79, 70, 229, 0.1);
-        padding: 2px 4px;
-        border-radius: 4px;
-        font-size: 14px;
+        font-family: 'Fira Code', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      @media (max-width: 720px) {
+        body {
+          padding: 48px 12px;
+        }
+
+        .form-wrapper {
+          padding: 24px;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .form-wrapper {
+          padding: 20px;
+        }
+
+        input[type='text'],
+        input[type='email'] {
+          padding: 12px 14px;
+          font-size: 0.95rem;
+        }
+
+        button {
+          padding: 12px 18px;
+          font-size: 0.95rem;
+        }
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes fade-in {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        ::before,
+        ::after {
+          animation-duration: 1ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 1ms !important;
+        }
       }
     </style>
   </head>
   <body>
-    <div class="container">
-      <h1>Embed This Form Anywhere</h1>
-      <p>
-        This example shows how to call the public subscription API using <code>fetch</code>. Copy this file
-        to your website (e.g. GoDaddy builder) and update the <code>API_BASE</code> constant to point to
-        your deployed newsletter server.
-      </p>
+    <main>
+      <section class="form-wrapper" aria-labelledby="subscription-title">
+        <header>
+          <h1 id="subscription-title">Stay in the loop</h1>
+          <p>
+            Drop your email to receive curated updates. No noise, just the essentials. We support
+            dark surfaces so this block drops into your site without extra tweaks.
+          </p>
+        </header>
+        <form id="subscribe-form" data-newsletter-form novalidate>
+          <div class="field">
+            <label for="name">Name <span class="hint">(optional)</span></label>
+            <input
+              id="name"
+              name="name"
+              type="text"
+              autocomplete="name"
+              inputmode="text"
+              placeholder="Alex Newsletter"
+              maxlength="80"
+            />
+          </div>
+          <div class="field">
+            <label for="email">Email address</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              inputmode="email"
+              placeholder="you@example.com"
+              required
+            />
+          </div>
+          <input id="honeypot" name="honeypot" type="text" tabindex="-1" autocomplete="off" hidden />
+          <button id="submit-button" type="submit">
+            <span>Subscribe</span>
+            <span class="loader" aria-hidden="true"></span>
+          </button>
+          <p class="status" data-status role="status" aria-live="polite"></p>
+        </form>
+      </section>
 
-      <form id="subscribe-form" novalidate>
-        <div>
-          <label for="name">Your name (optional)</label>
-          <input id="name" name="name" type="text" placeholder="Alex Newsletter" autocomplete="name" />
-        </div>
+      <section class="integration" aria-labelledby="integration-title">
+        <h2 id="integration-title">Integration options</h2>
 
-        <div>
-          <label for="email">Email address</label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            placeholder="you@example.com"
-            autocomplete="email"
-            required
-          />
-        </div>
+        <details open>
+          <summary>Version 1 · Standalone page</summary>
+          <p class="hint">
+            Deploy <code>example-form.html</code> as-is. Adjust <code>API_BASE</code> in the script
+            below to match your deployment.
+          </p>
+        </details>
 
-        <!-- Honeypot field: bots often fill every input -->
-        <input
-          id="website"
-          name="honeypot"
-          type="text"
-          class="honeypot"
-          tabindex="-1"
-          autocomplete="off"
-        />
+        <details>
+          <summary>Version 2 · Embeddable iframe</summary>
+          <p class="hint">
+            Host this file and drop the snippet wherever you need it. Append
+            <code>?surface=transparent</code> for seamless blending.
+          </p>
+          <pre><code>&lt;iframe
+  src="https://your-domain.com/example-form.html?surface=transparent"
+  title="Newsletter subscribe"
+  style="width:100%;max-width:420px;height:320px;border:0;border-radius:24px;overflow:hidden;background:transparent;"
+  loading="lazy"
+  referrerpolicy="strict-origin-when-cross-origin"
+&gt;&lt;/iframe&gt;</code></pre>
+        </details>
 
-        <button id="submit-button" type="submit">Subscribe</button>
-        <p id="status" class="status" role="status"></p>
-      </form>
-    </div>
+        <details>
+          <summary>Version 3 · Lightweight snippet for GoDaddy &amp; builders</summary>
+          <p class="hint">
+            Paste the markup into a custom HTML block. Include the script after the form to wire up
+            validation and submission.
+          </p>
+          <pre><code>&lt;form class="newsletter-minimal" data-newsletter-form novalidate&gt;
+  &lt;input type="email" name="email" placeholder="you@example.com" required /&gt;
+  &lt;button type="submit"&gt;Subscribe&lt;/button&gt;
+  &lt;p class="status" data-status role="status"&gt;&lt;/p&gt;
+&lt;/form&gt;
+&lt;script src="https://your-domain.com/newsletter-snippet.js" defer&gt;&lt;/script&gt;</code></pre>
+          <pre><code>// newsletter-snippet.js
+(function () {
+  const API_BASE = 'https://your-deployed-app.com';
+  const form = document.querySelector('[data-newsletter-form]');
+  const statusNode = form?.querySelector('[data-status]');
+  if (!form || !statusNode) return;
+
+  const button = form.querySelector('button[type="submit"]');
+  const honeypot = form.querySelector('input[name="honeypot"]');
+
+  function setStatus(message, state) {
+    statusNode.textContent = message || '';
+    statusNode.dataset.state = state || '';
+  }
+
+  function setLoading(loading) {
+    if (!button) return;
+    button.disabled = loading;
+    button.setAttribute('aria-busy', String(Boolean(loading)));
+  }
+
+  function isValidEmail(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  }
+
+  form.addEventListener('submit', async (event) =&gt; {
+    event.preventDefault();
+    const data = new FormData(form);
+    const email = (data.get('email') || '').toString().trim();
+    const name = (data.get('name') || '').toString().trim();
+    const trap = (data.get('honeypot') || '').toString().trim();
+
+    if (trap) {
+      setStatus('Something went wrong. Please try again.', 'error');
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      setStatus('Please enter a valid email address.', 'error');
+      return;
+    }
+
+    setLoading(true);
+    setStatus('Submitting…', '');
+
+    try {
+      const response = await fetch(\`\${API_BASE}/api/public/subscribe\`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, name }),
+      });
+
+      const result = await response.json().catch(() =&gt; ({}));
+      if (response.ok &amp;&amp; result.success) {
+        form.reset();
+        setStatus(result.message || 'Subscribed!', 'success');
+      } else {
+        setStatus(result.error || 'Could not subscribe yet. Try again later.', 'error');
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus('Network error. Please retry.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  });
+})();</code></pre>
+        </details>
+
+        <details>
+          <summary>Need a custom surface?</summary>
+          <p class="hint">
+            Add <code>?surface=transparent</code> or set <code>document.body.classList.add('surface-transparent')</code>
+            to float the form over any background.
+          </p>
+        </details>
+      </section>
+    </main>
 
     <script>
-      // Replace this with your production API root, e.g. 'https://newsletter.example.com'
       const API_BASE = window.location.origin;
-
-      const form = document.getElementById('subscribe-form');
-      const statusMessage = document.getElementById('status');
+      const form = document.querySelector('[data-newsletter-form]');
+      const statusMessage = document.querySelector('[data-status]');
       const submitButton = document.getElementById('submit-button');
+      const honeypot = document.getElementById('honeypot');
+      const params = new URLSearchParams(window.location.search);
+      const surface = params.get('surface');
 
-      function setStatus(message, type) {
-        statusMessage.textContent = message;
-        statusMessage.className = \`status \${type || ''}\`;
+      if (surface && surface.toLowerCase() === 'transparent') {
+        document.body.classList.add('surface-transparent');
       }
 
-      form.addEventListener('submit', async (event) => {
+      function isValidEmail(value) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+      }
+
+      function setStatus(message, state) {
+        statusMessage.textContent = message || '';
+        statusMessage.dataset.state = state || '';
+        statusMessage.dataset.visible = message ? 'true' : 'false';
+      }
+
+      function setLoading(loading) {
+        submitButton.disabled = loading;
+        submitButton.classList.toggle('is-loading', Boolean(loading));
+        submitButton.setAttribute('aria-busy', String(Boolean(loading)));
+      }
+
+      form?.addEventListener('submit', async (event) => {
         event.preventDefault();
 
         const formData = new FormData(form);
-        const payload = {
-          name: formData.get('name')?.trim() || undefined,
-          email: formData.get('email')?.trim(),
-          honeypot: formData.get('honeypot')?.trim(),
-        };
+        const email = (formData.get('email') || '').toString().trim();
+        const name = (formData.get('name') || '').toString().trim();
+        const trap = (formData.get('honeypot') || '').toString().trim();
 
-        if (!payload.email) {
+        if (trap) {
+          setStatus('Something went wrong. Please try again.', 'error');
+          return;
+        }
+
+        if (!isValidEmail(email)) {
           setStatus('Please enter a valid email address.', 'error');
           return;
         }
 
-        submitButton.disabled = true;
-        setStatus('Submitting your subscription...', '');
+        setLoading(true);
+        setStatus('Submitting your subscription…', '');
 
         try {
           const response = await fetch(\`\${API_BASE}/api/public/subscribe\`, {
@@ -198,24 +554,33 @@
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({ email, name }),
           });
 
-          const result = await response.json();
+          const result = await response.json().catch(() => ({}));
 
-          if (result.success) {
-            setStatus(result.message || 'Successfully subscribed!', 'success');
+          if (response.ok && result.success) {
             form.reset();
+            setStatus(result.message || 'Successfully subscribed.', 'success');
           } else {
-            setStatus(result.error || 'We could not subscribe you. Please try again.', 'error');
+            const errorMessage =
+              result.error ||
+              (response.status >= 500
+                ? 'Service is temporary unavailable. Try again soon.'
+                : 'We could not process your request yet. Please try again.');
+            setStatus(errorMessage, 'error');
           }
         } catch (error) {
           console.error(error);
-          setStatus('A network error occurred. Please try again later.', 'error');
+          setStatus('Network error. Check your connection and retry.', 'error');
         } finally {
-          submitButton.disabled = false;
+          setLoading(false);
         }
       });
+
+      if (honeypot) {
+        honeypot.setAttribute('aria-hidden', 'true');
+      }
     </script>
   </body>
 </html>
