@@ -53,10 +53,10 @@ README.md
    ADMIN_USERNAME=admin
    ADMIN_PASSWORD=$2b$12$replace_with_bcrypt_hash
    SESSION_SECRET=super_secret_session_key_change_me
-   # Optional: Vercel KV credentials (falls back to in-memory storage if omitted)
+   # Optional: Vercel KV credentials (subscriber + session persistence fall back to memory if omitted)
    KV_REST_API_URL=
    KV_REST_API_TOKEN=
-   KV_URL=                               # Only needed for direct Redis connections
+   KV_URL=                               # Recommended in production for persistent sessions (redis:// from Vercel KV)
    ```
    The server refuses to boot if anything is missing or if `SENDER_EMAIL` is malformed, so you catch configuration issues right away. For local development you may keep `ADMIN_PASSWORD` as plain text—the server hashes it at runtime—but in production you should store a bcrypt hash (see below). When the storage variables are missing, the app logs that it is using in-memory storage (ideal for local development).
 
@@ -143,12 +143,12 @@ Ensure `KV_REST_API_URL` and `KV_REST_API_TOKEN` are available in your environme
 
 ## Authentication & Sessions
 - The admin interface is protected by a password gate at `/login`. Credentials come from `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
-- Sessions are backed by `express-session` with a 24-hour idle timeout; selecting “Remember me” extends the cookie to 30 days.
+- Sessions are backed by `express-session` with a 24-hour idle timeout (30 days when “Remember me” is enabled). On Vercel or any multi-instance environment, provide `KV_URL` so sessions persist in Redis; otherwise they fall back to in-memory storage and reset on cold starts.
+- Session lifecycle events (create/destroy) are logged, and you can inspect the current session via `GET /api/session` or `/api/diagnostics` (under `session`).
 - Login attempts are rate limited (5 per 15 minutes per IP). When the limit is exceeded the form is locked temporarily and a warning is logged.
 - The login form is protected with a CSRF token; unauthenticated API calls respond with HTTP 401 so the client can redirect back to `/login`.
 - Passwords should be stored as bcrypt hashes in production. Generate one with `npx bcrypt-cli "your-strong-password"` (or any bcrypt tool) and place the resulting hash in `ADMIN_PASSWORD`.
 - `SESSION_SECRET` must be a long, random string. Rotate it whenever credentials change to invalidate all sessions.
-- For production, swap the default in-memory session store for something durable such as Redis (e.g., `connect-redis`). Redis also satisfies Vercel’s stateless requirements.
 - Need multiple admin users? Extend the auth middleware to load a hashed credential list from a secure data store (KV, Redis, or a managed secret) and compare via bcrypt.
 - Use `/logout` or the “Logout” button in the navigation to terminate the session. When a session expires naturally the app redirects back to `/login` and preserves the originally requested URL.
 
@@ -261,6 +261,7 @@ Confirm these variables are set in your hosting platform:
 - `GET /api/subscribers`
 - `POST /api/subscribers { email, name? }`
 - `DELETE /api/subscribers/:email`
+- `GET /api/session`
 - `POST /api/upload-image`
 - `POST /api/send-newsletter { title, content, previewText? }`
 - `POST /api/test-email { testEmail, includeImage? }`

@@ -12,10 +12,12 @@ const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const sanitizeHtml = require('sanitize-html');
 const session = require('express-session');
+const RedisStore = require('connect-redis').default;
 const bcrypt = require('bcrypt');
 const csrf = require('csurf');
 const { Resend } = require('resend');
 const { v2: cloudinary } = require('cloudinary');
+const { createClient: createRedisClient } = require('redis');
 const { performance } = require('perf_hooks');
 
 require('dotenv').config();
@@ -51,6 +53,7 @@ const WARMUP_GROWTH_DAYS = Number(process.env.WARMUP_GROWTH_DAYS || 7);
 const WARMUP_GROWTH_INCREMENT = Number(process.env.WARMUP_GROWTH_INCREMENT || 50);
 const ABSOLUTE_DAILY_SEND_LIMIT = Number(process.env.DAILY_SEND_LIMIT || 0);
 const CLICK_ALLOWED_SCHEMES = ['https:'];
+const SESSION_PREFIX = 'newsletter:sess:';
 
 /**
  * Tiny timestamped logger for consistent console output in production.
@@ -88,6 +91,24 @@ const warmupState = {
   dayKey: null,
   sent: 0,
   history: [],
+};
+let sessionStore = null;
+let sessionStoreMode = 'memory';
+let redisSessionClient = null;
+const sessionHealth = {
+  ready: false,
+  error: null,
+  lastErrorAt: null,
+  lastConnectedAt: null,
+  redisUrlPresent: Boolean(process.env.KV_URL),
+};
+const sessionLifecycle = {
+  lastCreatedAt: null,
+  lastCreatedSessionId: null,
+  lastDestroyedAt: null,
+  lastDestroyedSessionId: null,
+  lastTouchedAt: null,
+  lastTouchSessionId: null,
 };
 let kvClient = null;
 let kvInitializationError = null;
@@ -151,6 +172,101 @@ let storageLastOperationDetails = null;
     }
   }
 })();
+
+function initializeSessionStore() {
+  if (sessionStore) {
+    return;
+  }
+
+  sessionHealth.store = 'memory';
+
+  if (process.env.KV_URL) {
+    try {
+      redisSessionClient = createRedisClient({
+        url: process.env.KV_URL,
+        socket: {
+          reconnectStrategy: (retries) => Math.min(retries * 200, 2000),
+        },
+      });
+
+      redisSessionClient.on('connect', () => {
+        sessionHealth.ready = true;
+        sessionHealth.error = null;
+        sessionHealth.lastConnectedAt = new Date().toISOString();
+        logger.info('Redis session store connected.');
+      });
+
+      redisSessionClient.on('end', () => {
+        sessionHealth.ready = false;
+        logger.warn('Redis session store connection closed.');
+      });
+
+      redisSessionClient.on('error', (error) => {
+        sessionHealth.ready = false;
+        sessionHealth.error = error?.message || String(error);
+        sessionHealth.lastErrorAt = new Date().toISOString();
+        logger.error('Redis session store connection error.', {
+          message: error?.message,
+        });
+      });
+
+      redisSessionClient.connect().catch((error) => {
+        sessionHealth.ready = false;
+        sessionHealth.error = error?.message || String(error);
+        sessionHealth.lastErrorAt = new Date().toISOString();
+        logger.error('Failed to connect to Redis session store.', {
+          message: error?.message,
+        });
+      });
+
+      sessionStore = new RedisStore({
+        client: redisSessionClient,
+        prefix: SESSION_PREFIX,
+      });
+      sessionStoreMode = 'redis';
+      sessionHealth.store = 'redis';
+      return;
+    } catch (error) {
+      sessionHealth.ready = false;
+      sessionHealth.error = error?.message || String(error);
+      sessionHealth.lastErrorAt = new Date().toISOString();
+      logger.error('Failed to initialize Redis session store. Falling back to in-memory store.', {
+        message: error?.message,
+      });
+      sessionStore = new session.MemoryStore();
+      sessionStoreMode = 'memory';
+      sessionHealth.store = 'memory';
+      sessionHealth.ready = true;
+      return;
+    }
+  }
+
+  sessionStore = new session.MemoryStore();
+  sessionStoreMode = 'memory';
+  sessionHealth.store = 'memory';
+  sessionHealth.ready = true;
+  sessionHealth.error = null;
+  logger.warn(
+    'Using in-memory session store. Sessions will reset when the server restarts. Configure KV_URL for persistent sessions.',
+  );
+  if (process.env.NODE_ENV === 'production') {
+    logger.error(
+      'Session store is in-memory while running in production. Configure KV_URL to persist admin sessions across deployments.',
+    );
+  }
+}
+
+initializeSessionStore();
+
+if (sessionStore && typeof sessionStore.destroy === 'function') {
+  const originalDestroy = sessionStore.destroy.bind(sessionStore);
+  sessionStore.destroy = (sid, callback) => {
+    sessionLifecycle.lastDestroyedAt = new Date().toISOString();
+    sessionLifecycle.lastDestroyedSessionId = sid;
+    logger.info('Session destroyed.', { sessionId: sid, store: sessionStoreMode });
+    return originalDestroy(sid, callback);
+  };
+}
 
 const requiredEnvVars = [
   'RESEND_API_KEY',
@@ -1274,6 +1390,7 @@ app.use(express.urlencoded({ extended: true }));
 const sessionConfig = {
   name: 'newsletter.sid',
   secret: SESSION_SECRET,
+  store: sessionStore,
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -1287,6 +1404,23 @@ const sessionConfig = {
 app.use(session(sessionConfig));
 
 app.use((req, res, next) => {
+  if (req.session) {
+    const nowIso = new Date().toISOString();
+    sessionLifecycle.lastTouchedAt = nowIso;
+    sessionLifecycle.lastTouchSessionId = req.sessionID;
+
+    if (!req.session.createdAt) {
+      req.session.createdAt = nowIso;
+      sessionLifecycle.lastCreatedAt = nowIso;
+      sessionLifecycle.lastCreatedSessionId = req.sessionID;
+      logger.info('Session created.', {
+        sessionId: req.sessionID,
+        store: sessionStoreMode,
+        ip: req.ip,
+      });
+    }
+  }
+
   if (req.session && req.session.isAuthenticated) {
     const targetMaxAge = req.session.rememberMe ? REMEMBER_ME_MAX_AGE : DEFAULT_SESSION_MAX_AGE;
     if (req.session.cookie.maxAge !== targetMaxAge) {
@@ -1468,15 +1602,43 @@ app.post('/login', loginLimiter, csrfProtection, async (req, res) => {
     return;
   }
 
-  req.session.isAuthenticated = true;
-  req.session.username = ADMIN_USERNAME;
-  req.session.rememberMe = rememberMe;
-  req.session.loginAt = new Date().toISOString();
-  req.session.cookie.maxAge = rememberMe ? REMEMBER_ME_MAX_AGE : DEFAULT_SESSION_MAX_AGE;
+  req.session.regenerate((error) => {
+    if (error) {
+      logger.error('Session regeneration failed during login.', {
+        message: error?.message,
+      });
+      if (req.session) {
+        req.session.authFeedback = {
+          type: 'error',
+          text: 'We could not establish a secure session. Please try logging in again.',
+          remember: rememberMe,
+        };
+      }
+      res.redirect(`/login?next=${encodeURIComponent(nextPath)}`);
+      return;
+    }
 
-  logger.info('Authentication succeeded.', { ip: req.ip, username: ADMIN_USERNAME });
+    const nowIso = new Date().toISOString();
+    req.session.isAuthenticated = true;
+    req.session.username = ADMIN_USERNAME;
+    req.session.rememberMe = rememberMe;
+    req.session.loginAt = nowIso;
+    req.session.createdAt = nowIso;
+    req.session.cookie.maxAge = rememberMe ? REMEMBER_ME_MAX_AGE : DEFAULT_SESSION_MAX_AGE;
 
-  res.redirect(nextPath);
+    sessionLifecycle.lastCreatedAt = nowIso;
+    sessionLifecycle.lastCreatedSessionId = req.sessionID;
+
+    logger.info('Authentication succeeded.', {
+      ip: req.ip,
+      username: ADMIN_USERNAME,
+      sessionId: req.sessionID,
+      rememberMe,
+      store: sessionStoreMode,
+    });
+
+    res.redirect(nextPath);
+  });
 });
 
 app.post('/logout', (req, res) => {
@@ -1964,6 +2126,36 @@ function isValidEmail(value) {
   }
   return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email);
 }
+
+/**
+ * GET subscribers list.
+ */
+app.get('/api/session', ensureAuthenticatedApi, (req, res) => {
+  res.json({
+    sessionId: req.sessionID,
+    isAuthenticated: Boolean(req.session?.isAuthenticated),
+    username: req.session?.username || null,
+    rememberMe: Boolean(req.session?.rememberMe),
+    loginAt: req.session?.loginAt || null,
+    createdAt: req.session?.createdAt || null,
+    cookie: {
+      maxAge: req.session?.cookie?.maxAge ?? null,
+      expires: req.session?.cookie?.expires ?? null,
+      secure: req.session?.cookie?.secure ?? process.env.NODE_ENV === 'production',
+      sameSite: req.session?.cookie?.sameSite ?? 'lax',
+      httpOnly: true,
+    },
+    store: {
+      mode: sessionStoreMode,
+      ready: sessionHealth.ready,
+      error: sessionHealth.error,
+      lastErrorAt: sessionHealth.lastErrorAt,
+      lastConnectedAt: sessionHealth.lastConnectedAt,
+      redisUrlPresent: sessionHealth.redisUrlPresent,
+    },
+    lifecycle: { ...sessionLifecycle },
+  });
+});
 
 /**
  * GET subscribers list.
@@ -2916,6 +3108,15 @@ app.get('/api/diagnostics', ensureAuthenticatedApi, async (_, res) => {
       resendStatus,
       cloudinaryStatus,
       lastEmailSent: lastEmailDiagnostic,
+      session: {
+        store: sessionStoreMode,
+        ready: sessionHealth.ready,
+        error: sessionHealth.error,
+        lastErrorAt: sessionHealth.lastErrorAt,
+        lastConnectedAt: sessionHealth.lastConnectedAt,
+        redisUrlPresent: sessionHealth.redisUrlPresent,
+        lifecycle: { ...sessionLifecycle },
+      },
       publicRateLimit: '10 requests per IP per hour',
       suspiciousActivity: suspiciousSummary,
     });
