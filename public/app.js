@@ -1318,4 +1318,221 @@ document.addEventListener('DOMContentLoaded', () => {
   activateView('compose-view');
 });
 
+// ========================================
+// COMPOSING IMPROVEMENTS
+// ========================================
+
+// Character counters
+function initializeCharacterCounters() {
+  const titleInput = document.getElementById('newsletter-title');
+  const titleCounter = document.getElementById('title-char-counter');
+  const previewInput = document.getElementById('newsletter-preview-text');
+  const previewCounter = document.getElementById('preview-char-counter');
+  
+  if (titleInput && titleCounter) {
+    titleInput.addEventListener('input', function() {
+      const length = this.value.length;
+      titleCounter.textContent = `${length} / 50`;
+      
+      // Color coding
+      if (length > 50) {
+        titleCounter.style.color = '#f87171'; // Red
+        titleCounter.style.fontWeight = 'bold';
+      } else if (length > 40) {
+        titleCounter.style.color = '#fbbf24'; // Orange
+        titleCounter.style.fontWeight = 'normal';
+      } else {
+        titleCounter.style.color = '#6b7280'; // Gray
+        titleCounter.style.fontWeight = 'normal';
+      }
+    });
+    
+    // Trigger on load if there's content
+    if (titleInput.value) {
+      titleInput.dispatchEvent(new Event('input'));
+    }
+  }
+  
+  if (previewInput && previewCounter) {
+    previewInput.addEventListener('input', function() {
+      const length = this.value.length;
+      previewCounter.textContent = `${length} / 150`;
+      
+      // Ideal range is 40-130
+      if (length >= 40 && length <= 130) {
+        previewCounter.style.color = '#10b981'; // Green
+      } else if (length > 130) {
+        previewCounter.style.color = '#f87171'; // Red
+      } else {
+        previewCounter.style.color = '#6b7280'; // Gray
+      }
+    });
+    
+    // Trigger on load if there's content
+    if (previewInput.value) {
+      previewInput.dispatchEvent(new Event('input'));
+    }
+  }
+}
+
+// Auto-save draft functionality
+let autoSaveTimeout;
+const AUTOSAVE_INTERVAL = 30000; // 30 seconds
+
+function saveDraft() {
+  const title = document.getElementById('newsletter-title')?.value || '';
+  const previewText = document.getElementById('newsletter-preview-text')?.value || '';
+  const content = document.getElementById('newsletter-content')?.innerHTML || '';
+  
+  if (!title && !previewText && !content) {
+    // Don't save empty drafts
+    return;
+  }
+  
+  const draft = {
+    title,
+    previewText,
+    content,
+    savedAt: new Date().toISOString()
+  };
+  
+  try {
+    localStorage.setItem('newsletter-draft', JSON.stringify(draft));
+    showDraftSavedIndicator();
+  } catch (e) {
+    console.error('Failed to save draft:', e);
+  }
+}
+
+function showDraftSavedIndicator() {
+  // Remove existing indicator if present
+  const existing = document.getElementById('draft-saved-indicator');
+  if (existing) existing.remove();
+  
+  const indicator = document.createElement('div');
+  indicator.id = 'draft-saved-indicator';
+  indicator.textContent = '✓ Draft saved';
+  indicator.style.cssText = `
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    background: #10b981;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    z-index: 9999;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    animation: slideIn 0.3s ease-out;
+  `;
+  
+  document.body.appendChild(indicator);
+  
+  setTimeout(() => {
+    indicator.style.animation = 'slideOut 0.3s ease-out';
+    setTimeout(() => indicator.remove(), 300);
+  }, 2000);
+}
+
+function loadDraft() {
+  try {
+    const saved = localStorage.getItem('newsletter-draft');
+    if (!saved) return;
+    
+    const draft = JSON.parse(saved);
+    const savedDate = new Date(draft.savedAt);
+    const minutesAgo = Math.floor((Date.now() - savedDate.getTime()) / 60000);
+    
+    let timeText;
+    if (minutesAgo < 1) {
+      timeText = 'just now';
+    } else if (minutesAgo === 1) {
+      timeText = '1 minute ago';
+    } else if (minutesAgo < 60) {
+      timeText = `${minutesAgo} minutes ago`;
+    } else {
+      const hoursAgo = Math.floor(minutesAgo / 60);
+      timeText = hoursAgo === 1 ? '1 hour ago' : `${hoursAgo} hours ago`;
+    }
+    
+    if (confirm(`Found unsaved draft from ${timeText}. Restore it?`)) {
+      const titleInput = document.getElementById('newsletter-title');
+      const previewInput = document.getElementById('newsletter-preview-text');
+      const contentEditor = document.getElementById('newsletter-content');
+      
+      if (titleInput) titleInput.value = draft.title;
+      if (previewInput) previewInput.value = draft.previewText;
+      if (contentEditor) contentEditor.innerHTML = draft.content;
+      
+      // Trigger input events to update counters
+      if (titleInput) titleInput.dispatchEvent(new Event('input'));
+      if (previewInput) previewInput.dispatchEvent(new Event('input'));
+    }
+  } catch (e) {
+    console.error('Failed to load draft:', e);
+  }
+}
+
+function clearDraft() {
+  try {
+    localStorage.removeItem('newsletter-draft');
+    
+    const titleInput = document.getElementById('newsletter-title');
+    const previewInput = document.getElementById('newsletter-preview-text');
+    const contentEditor = document.getElementById('newsletter-content');
+    
+    if (titleInput) titleInput.value = '';
+    if (previewInput) previewInput.value = '';
+    if (contentEditor) contentEditor.innerHTML = '';
+    
+    // Trigger input events
+    if (titleInput) titleInput.dispatchEvent(new Event('input'));
+    if (previewInput) previewInput.dispatchEvent(new Event('input'));
+    
+    alert('Draft cleared!');
+  } catch (e) {
+    console.error('Failed to clear draft:', e);
+  }
+}
+
+function startAutoSave() {
+  // Auto-save on input with debounce
+  const titleInput = document.getElementById('newsletter-title');
+  const previewInput = document.getElementById('newsletter-preview-text');
+  const contentEditor = document.getElementById('newsletter-content');
+  
+  const debouncedSave = () => {
+    clearTimeout(autoSaveTimeout);
+    autoSaveTimeout = setTimeout(saveDraft, 2000); // Save 2 seconds after last edit
+  };
+  
+  if (titleInput) titleInput.addEventListener('input', debouncedSave);
+  if (previewInput) previewInput.addEventListener('input', debouncedSave);
+  if (contentEditor) contentEditor.addEventListener('input', debouncedSave);
+  
+  // Also save every 30 seconds
+  setInterval(saveDraft, AUTOSAVE_INTERVAL);
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+  // Wait a bit for other scripts to initialize
+  setTimeout(() => {
+    initializeCharacterCounters();
+    loadDraft();
+    startAutoSave();
+  }, 100);
+});
+
+// Clear draft after successful send
+// Find your existing send button handler and add this:
+const existingSendButton = document.getElementById('send-button');
+if (existingSendButton) {
+  existingSendButton.addEventListener('click', function() {
+    // After successful send, clear the draft
+    // You'll need to add this inside your existing send success callback
+    // localStorage.removeItem('newsletter-draft');
+  });
+}
+
 
