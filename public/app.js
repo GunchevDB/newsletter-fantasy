@@ -1319,8 +1319,24 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ========================================
-// COMPOSING IMPROVEMENTS
+// PHASE 2: COMPOSING IMPROVEMENTS
 // ========================================
+
+// Spam trigger words list
+const SPAM_WORDS = [
+  'free', 'buy now', 'click here', 'limited time', 'act now',
+  'urgent', 'guaranteed', 'winner', 'congratulations', 'cash',
+  'prize', 'order now', 'call now', 'don\'t delete', 'earn money',
+  'extra income', 'work from home', 'discount', '100% free',
+  'limited offer', 'special promotion', 'no cost', 'risk-free'
+];
+
+// CTA keywords for detection
+const CTA_KEYWORDS = [
+  'click', 'buy', 'shop', 'learn more', 'read more', 'sign up',
+  'subscribe', 'join', 'register', 'download', 'get started',
+  'visit', 'check out', 'discover', 'explore', 'contact'
+];
 
 // Character counters
 function initializeCharacterCounters() {
@@ -1336,18 +1352,19 @@ function initializeCharacterCounters() {
       
       // Color coding
       if (length > 50) {
-        titleCounter.style.color = '#f87171'; // Red
+        titleCounter.style.color = '#f87171';
         titleCounter.style.fontWeight = 'bold';
       } else if (length > 40) {
-        titleCounter.style.color = '#fbbf24'; // Orange
+        titleCounter.style.color = '#fbbf24';
         titleCounter.style.fontWeight = 'normal';
       } else {
-        titleCounter.style.color = '#6b7280'; // Gray
+        titleCounter.style.color = '#6b7280';
         titleCounter.style.fontWeight = 'normal';
       }
+      
+      updateBestPractices();
     });
     
-    // Trigger on load if there's content
     if (titleInput.value) {
       titleInput.dispatchEvent(new Event('input'));
     }
@@ -1358,26 +1375,177 @@ function initializeCharacterCounters() {
       const length = this.value.length;
       previewCounter.textContent = `${length} / 150`;
       
-      // Ideal range is 40-130
       if (length >= 40 && length <= 130) {
-        previewCounter.style.color = '#10b981'; // Green
+        previewCounter.style.color = '#10b981';
       } else if (length > 130) {
-        previewCounter.style.color = '#f87171'; // Red
+        previewCounter.style.color = '#f87171';
       } else {
-        previewCounter.style.color = '#6b7280'; // Gray
+        previewCounter.style.color = '#6b7280';
       }
+      
+      updateBestPractices();
     });
     
-    // Trigger on load if there's content
     if (previewInput.value) {
       previewInput.dispatchEvent(new Event('input'));
     }
   }
 }
 
+// Word count functionality
+function initializeWordCount() {
+  const contentEditor = document.getElementById('newsletter-content');
+  const wordCountEl = document.getElementById('word-count');
+  
+  if (!contentEditor || !wordCountEl) return;
+  
+  function updateWordCount() {
+    const text = contentEditor.innerText || '';
+    const words = text.trim().split(/\s+/).filter(w => w.length > 0);
+    const wordCount = words.length;
+    
+    wordCountEl.textContent = `${wordCount} word${wordCount !== 1 ? 's' : ''}`;
+    
+    // Update color based on length
+    if (wordCount > 1000) {
+      wordCountEl.style.color = '#f87171';
+    } else if (wordCount > 800) {
+      wordCountEl.style.color = '#fbbf24';
+    } else {
+      wordCountEl.style.color = '#6b7280';
+    }
+    
+    updateBestPractices();
+  }
+  
+  contentEditor.addEventListener('input', updateWordCount);
+  updateWordCount();
+}
+
+// Spam word detector
+function initializeSpamDetector() {
+  const titleInput = document.getElementById('newsletter-title');
+  const previewInput = document.getElementById('newsletter-preview-text');
+  const contentEditor = document.getElementById('newsletter-content');
+  const spamWarning = document.getElementById('spam-warning');
+  const spamWordsList = document.getElementById('spam-words-list');
+  
+  if (!spamWarning) return;
+  
+  function checkSpamWords() {
+    const title = titleInput?.value.toLowerCase() || '';
+    const preview = previewInput?.value.toLowerCase() || '';
+    const content = contentEditor?.innerText.toLowerCase() || '';
+    const allText = `${title} ${preview} ${content}`;
+    
+    const foundWords = SPAM_WORDS.filter(word => 
+      allText.includes(word.toLowerCase())
+    );
+    
+    if (foundWords.length > 0) {
+      spamWarning.classList.remove('hidden');
+      spamWordsList.textContent = foundWords.map(w => 
+        `"${w}"`
+      ).join(', ');
+    } else {
+      spamWarning.classList.add('hidden');
+    }
+  }
+  
+  if (titleInput) titleInput.addEventListener('input', checkSpamWords);
+  if (previewInput) previewInput.addEventListener('input', checkSpamWords);
+  if (contentEditor) contentEditor.addEventListener('input', checkSpamWords);
+  
+  checkSpamWords();
+}
+
+// Best practices checklist
+function updateBestPractices() {
+  const titleInput = document.getElementById('newsletter-title');
+  const previewInput = document.getElementById('newsletter-preview-text');
+  const contentEditor = document.getElementById('newsletter-content');
+  
+  const title = titleInput?.value || '';
+  const preview = previewInput?.value || '';
+  const content = contentEditor?.innerHTML || '';
+  const text = contentEditor?.innerText || '';
+  const words = text.trim().split(/\s+/).filter(w => w.length > 0);
+  
+  // Check 1: Title filled and < 50 chars
+  const checkTitle = document.getElementById('check-title');
+  if (title.length > 0 && title.length <= 50) {
+    checkTitle?.classList.add('complete');
+    checkTitle.querySelector('.check-icon').textContent = '✓';
+  } else {
+    checkTitle?.classList.remove('complete');
+    checkTitle.querySelector('.check-icon').textContent = '○';
+  }
+  
+  // Check 2: Preview text 40-130 chars
+  const checkPreview = document.getElementById('check-preview');
+  if (preview.length >= 40 && preview.length <= 130) {
+    checkPreview?.classList.add('complete');
+    checkPreview.querySelector('.check-icon').textContent = '✓';
+  } else {
+    checkPreview?.classList.remove('complete');
+    checkPreview.querySelector('.check-icon').textContent = '○';
+  }
+  
+  // Check 3: Has image
+  const checkImage = document.getElementById('check-image');
+  const hasImage = content.includes('<img');
+  if (hasImage) {
+    checkImage?.classList.add('complete');
+    checkImage.querySelector('.check-icon').textContent = '✓';
+  } else {
+    checkImage?.classList.remove('complete');
+    checkImage.querySelector('.check-icon').textContent = '○';
+  }
+  
+  // Check 4: Word count < 1000
+  const checkLength = document.getElementById('check-length');
+  if (words.length > 0 && words.length <= 1000) {
+    checkLength?.classList.add('complete');
+    checkLength.querySelector('.check-icon').textContent = '✓';
+  } else {
+    checkLength?.classList.remove('complete');
+    checkLength.querySelector('.check-icon').textContent = '○';
+  }
+  
+  // Check 5: Has CTA
+  const checkCta = document.getElementById('check-cta');
+  const textLower = text.toLowerCase();
+  const hasCta = CTA_KEYWORDS.some(keyword => textLower.includes(keyword));
+  if (hasCta) {
+    checkCta?.classList.add('complete');
+    checkCta.querySelector('.check-icon').textContent = '✓';
+  } else {
+    checkCta?.classList.remove('complete');
+    checkCta.querySelector('.check-icon').textContent = '○';
+  }
+}
+
+// Toggle checklist visibility
+function initializeChecklistToggle() {
+  const toggleBtn = document.getElementById('toggle-checklist');
+  const checklistItems = document.getElementById('checklist-items');
+  
+  if (!toggleBtn || !checklistItems) return;
+  
+  toggleBtn.addEventListener('click', function() {
+    if (checklistItems.classList.contains('hidden')) {
+      checklistItems.classList.remove('hidden');
+      toggleBtn.textContent = 'Hide';
+    } else {
+      checklistItems.classList.add('hidden');
+      toggleBtn.textContent = 'Show';
+    }
+  });
+}
+
 // Auto-save draft functionality
 let autoSaveTimeout;
-const AUTOSAVE_INTERVAL = 30000; // 30 seconds
+const AUTOSAVE_INTERVAL = 30000;
 
 function saveDraft() {
   const title = document.getElementById('newsletter-title')?.value || '';
@@ -1385,7 +1553,6 @@ function saveDraft() {
   const content = document.getElementById('newsletter-content')?.innerHTML || '';
   
   if (!title && !previewText && !content) {
-    // Don't save empty drafts
     return;
   }
   
@@ -1405,7 +1572,6 @@ function saveDraft() {
 }
 
 function showDraftSavedIndicator() {
-  // Remove existing indicator if present
   const existing = document.getElementById('draft-saved-indicator');
   if (existing) existing.remove();
   
@@ -1464,9 +1630,9 @@ function loadDraft() {
       if (previewInput) previewInput.value = draft.previewText;
       if (contentEditor) contentEditor.innerHTML = draft.content;
       
-      // Trigger input events to update counters
       if (titleInput) titleInput.dispatchEvent(new Event('input'));
       if (previewInput) previewInput.dispatchEvent(new Event('input'));
+      if (contentEditor) contentEditor.dispatchEvent(new Event('input'));
     }
   } catch (e) {
     console.error('Failed to load draft:', e);
@@ -1485,9 +1651,9 @@ function clearDraft() {
     if (previewInput) previewInput.value = '';
     if (contentEditor) contentEditor.innerHTML = '';
     
-    // Trigger input events
     if (titleInput) titleInput.dispatchEvent(new Event('input'));
     if (previewInput) previewInput.dispatchEvent(new Event('input'));
+    if (contentEditor) contentEditor.dispatchEvent(new Event('input'));
     
     alert('Draft cleared!');
   } catch (e) {
@@ -1496,43 +1662,131 @@ function clearDraft() {
 }
 
 function startAutoSave() {
-  // Auto-save on input with debounce
   const titleInput = document.getElementById('newsletter-title');
   const previewInput = document.getElementById('newsletter-preview-text');
   const contentEditor = document.getElementById('newsletter-content');
   
   const debouncedSave = () => {
     clearTimeout(autoSaveTimeout);
-    autoSaveTimeout = setTimeout(saveDraft, 2000); // Save 2 seconds after last edit
+    autoSaveTimeout = setTimeout(saveDraft, 2000);
   };
   
   if (titleInput) titleInput.addEventListener('input', debouncedSave);
   if (previewInput) previewInput.addEventListener('input', debouncedSave);
   if (contentEditor) contentEditor.addEventListener('input', debouncedSave);
   
-  // Also save every 30 seconds
   setInterval(saveDraft, AUTOSAVE_INTERVAL);
 }
 
-// Initialize on page load
-document.addEventListener('DOMContentLoaded', function() {
-  // Wait a bit for other scripts to initialize
-  setTimeout(() => {
-    initializeCharacterCounters();
-    loadDraft();
-    startAutoSave();
-  }, 100);
-});
-
-// Clear draft after successful send
-// Find your existing send button handler and add this:
-const existingSendButton = document.getElementById('send-button');
-if (existingSendButton) {
-  existingSendButton.addEventListener('click', function() {
-    // After successful send, clear the draft
-    // You'll need to add this inside your existing send success callback
-    // localStorage.removeItem('newsletter-draft');
+// Send test email functionality
+function initializeTestEmailButton() {
+  const testEmailBtn = document.getElementById('test-email-button');
+  if (!testEmailBtn) return;
+  
+  testEmailBtn.addEventListener('click', async function() {
+    const titleInput = document.getElementById('newsletter-title');
+    const previewInput = document.getElementById('newsletter-preview-text');
+    const contentEditor = document.getElementById('newsletter-content');
+    const statusEl = document.getElementById('send-status');
+    
+    const title = titleInput?.value || '';
+    const previewText = previewInput?.value || '';
+    const content = contentEditor?.innerHTML || '';
+    
+    if (!title || !content) {
+      alert('Please fill in at least the title and content before sending a test email.');
+      return;
+    }
+    
+    if (!confirm('Send a test email to yourself? This will be sent to your admin email.')) {
+      return;
+    }
+    
+    testEmailBtn.disabled = true;
+    testEmailBtn.innerHTML = '<span class="icon">⏳</span><span>Sending...</span>';
+    
+    try {
+      const response = await fetch('/api/test-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          testEmail: 'admin@example.com', // Will use admin email from server
+          subject: title,
+          previewText: previewText,
+          content: content
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        if (statusEl) {
+          statusEl.textContent = '✓ Test email sent successfully! Check your inbox.';
+          statusEl.style.color = '#10b981';
+        }
+      } else {
+        throw new Error(data.error || 'Failed to send test email');
+      }
+    } catch (error) {
+      if (statusEl) {
+        statusEl.textContent = `✗ Error: ${error.message}`;
+        statusEl.style.color = '#f87171';
+      }
+    } finally {
+      testEmailBtn.disabled = false;
+      testEmailBtn.innerHTML = '<span class="icon">✉️</span><span>Send test email</span>';
+    }
   });
+}
+
+// Button handlers
+function initializeClearDraftButton() {
+  const clearButton = document.getElementById('clear-draft-button');
+  if (clearButton) {
+    clearButton.addEventListener('click', function() {
+      if (confirm('Are you sure you want to clear the draft? This cannot be undone.')) {
+        clearDraft();
+      }
+    });
+  }
+}
+
+function initializeSaveDraftButton() {
+  const saveButton = document.getElementById('save-draft-button');
+  if (saveButton) {
+    saveButton.addEventListener('click', function() {
+      saveDraft();
+    });
+  }
+}
+
+// Initialize all Phase 2 improvements
+function initializeComposingImprovements() {
+  initializeCharacterCounters();
+  initializeWordCount();
+  initializeSpamDetector();
+  initializeChecklistToggle();
+  updateBestPractices();
+  loadDraft();
+  startAutoSave();
+  initializeClearDraftButton();
+  initializeSaveDraftButton();
+  initializeTestEmailButton();
+  
+  // Update checklist when content changes
+  const contentEditor = document.getElementById('newsletter-content');
+  if (contentEditor) {
+    contentEditor.addEventListener('input', updateBestPractices);
+  }
+}
+
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(initializeComposingImprovements, 100);
+  });
+} else {
+  setTimeout(initializeComposingImprovements, 100);
 }
 
 

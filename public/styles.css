@@ -716,6 +716,10 @@ select:focus {
   font-size: 2.4rem;
 }
 
+/* ========================================
+   PHASE 2: COMPOSING IMPROVEMENTS
+   ======================================== */
+
 /* Draft saved indicator animations */
 @keyframes slideIn {
   from {
@@ -739,8 +743,8 @@ select:focus {
   }
 }
 
-/* Character counter styling */
-.field-label-wrapper {
+/* Fixed: Character counter positioning */
+.field-label-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -751,7 +755,169 @@ select:focus {
   font-size: 0.875rem;
   color: #6b7280;
   font-weight: normal;
+  transition: color 0.2s ease, font-weight 0.2s ease;
+  white-space: nowrap;
+}
+
+.input-with-counter {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.input-with-counter input {
+  flex: 1;
+}
+
+/* Best Practices Checklist */
+.best-practices-checklist {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.checklist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.checklist-header h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #374151;
+  margin: 0;
+}
+
+.btn-text {
+  background: none;
+  border: none;
+  color: #6366f1;
+  font-size: 0.875rem;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.btn-text:hover {
+  color: #4f46e5;
+}
+
+.checklist-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.checklist-items.hidden {
+  display: none;
+}
+
+.checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: #6b7280;
   transition: color 0.2s ease;
+}
+
+.checklist-item.complete {
+  color: #10b981;
+}
+
+.check-icon {
+  font-size: 1.25rem;
+  transition: transform 0.2s ease;
+}
+
+.checklist-item.complete .check-icon {
+  content: '✓';
+}
+
+.checklist-item.complete .check-icon::before {
+  content: '✓';
+}
+
+/* Spam Warning */
+.spam-warning {
+  background: #fef3c7;
+  border: 1px solid #fbbf24;
+  border-radius: 6px;
+  padding: 0.875rem;
+  margin-bottom: 1rem;
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.spam-warning.hidden {
+  display: none;
+}
+
+.warning-icon {
+  font-size: 1.25rem;
+  flex-shrink: 0;
+}
+
+.warning-content {
+  flex: 1;
+}
+
+.warning-content strong {
+  color: #92400e;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.warning-hint {
+  font-size: 0.875rem;
+  color: #78350f;
+  margin: 0.25rem 0 0;
+}
+
+#spam-words-list {
+  color: #b45309;
+  font-weight: 600;
+  display: inline-block;
+  margin-left: 0.25rem;
+}
+
+/* Word Count in Toolbar */
+.toolbar-spacer {
+  flex: 1;
+}
+
+.word-count {
+  font-size: 0.875rem;
+  color: #6b7280;
+  padding: 0.5rem;
+  white-space: nowrap;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+  .field-label-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+  
+  .input-with-counter {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .checklist-items {
+    font-size: 0.8rem;
+  }
+  
+  .best-practices-checklist {
+    padding: 0.75rem;
+  }
 }
 
 @media (max-width: 992px) {

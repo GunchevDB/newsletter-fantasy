@@ -58,29 +58,71 @@
           </div>
         </header>
         <div class="card-body">
+
+          <!-- Best Practices Checklist -->
+          <div class="best-practices-checklist">
+            <div class="checklist-header">
+              <h3>✓ Best Practices</h3>
+              <button id="toggle-checklist" class="btn-text" type="button">Hide</button>
+            </div>
+            <div id="checklist-items" class="checklist-items">
+              <div class="checklist-item" id="check-title">
+                <span class="check-icon">○</span>
+                <span class="check-label">Subject line filled (&lt; 50 chars)</span>
+              </div>
+              <div class="checklist-item" id="check-preview">
+                <span class="check-icon">○</span>
+                <span class="check-label">Preview text added (40-130 chars)</span>
+              </div>
+              <div class="checklist-item" id="check-image">
+                <span class="check-icon">○</span>
+                <span class="check-label">At least one image included</span>
+              </div>
+              <div class="checklist-item" id="check-length">
+                <span class="check-icon">○</span>
+                <span class="check-label">Content length reasonable (&lt; 1000 words)</span>
+              </div>
+              <div class="checklist-item" id="check-cta">
+                <span class="check-icon">○</span>
+                <span class="check-label">Has a clear call-to-action</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Title field with character counter -->
           <div class="field">
-            <div class="field-label-wrapper">
+            <div class="field-label-row">
               <label class="field-label" for="newsletter-title">Title</label>
               <span id="title-char-counter" class="char-counter">0 / 50</span>
             </div>
-            <input id="newsletter-title" type="text" placeholder="Announcing our latest updates" aria-required="true" maxlength="100" />
+            <input id="newsletter-title" type="text" placeholder="Announcing our latest updates" aria-required="true"
+              maxlength="100" />
           </div>
-          
+
           <!-- Preview text with character counter -->
           <div class="field">
-            <div class="field-label-wrapper">
+            <div class="field-label-row">
               <label class="field-label" for="newsletter-preview-text">Preview text</label>
               <span class="field-hint">Optional · Shown in inbox snippets</span>
             </div>
-            <div class="with-counter">
+            <div class="input-with-counter">
               <input id="newsletter-preview-text" type="text" placeholder="A quick summary to entice opens"
                 maxlength="150" aria-describedby="preview-char-counter" />
               <span id="preview-char-counter" class="char-counter">0 / 150</span>
             </div>
           </div>
 
-          <!-- Editor card -->
+          <!-- Spam Word Warnings -->
+          <div id="spam-warning" class="spam-warning hidden">
+            <span class="warning-icon">⚠️</span>
+            <div class="warning-content">
+              <strong>Spam trigger words detected:</strong>
+              <span id="spam-words-list"></span>
+              <p class="warning-hint">These words may trigger spam filters. Consider rephrasing.</p>
+            </div>
+          </div>
+
+          <!-- Editor card with word count -->
           <div class="editor-card">
             <div class="editor-toolbar" role="toolbar" aria-label="Formatting options">
               <button class="btn ghost" data-command="bold" type="button">
@@ -104,6 +146,8 @@
                 <span>Insert image</span>
               </button>
               <input id="image-upload-input" type="file" accept="image/*" hidden />
+              <div class="toolbar-spacer"></div>
+              <span id="word-count" class="word-count">0 words</span>
             </div>
             <div id="newsletter-content" class="editor" contenteditable="true" aria-label="Newsletter content editor">
             </div>
@@ -115,6 +159,10 @@
             <button id="preview-button" class="btn secondary icon-left" type="button">
               <span class="icon" aria-hidden="true">👁️</span>
               <span>Preview email</span>
+            </button>
+            <button id="test-email-button" class="btn secondary icon-left" type="button">
+              <span class="icon" aria-hidden="true">✉️</span>
+              <span>Send test email</span>
             </button>
             <button id="send-button" class="btn primary icon-left" type="button">
               <span class="icon" aria-hidden="true">📧</span>
