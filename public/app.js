@@ -58,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const targetView = tab.dataset.target;
       activateView(targetView);
       if (targetView === 'subscribers-view') {
-        loadSubscribers({ silent: subscribersLoadedOnce }).catch(() => {});
+        loadSubscribers({ silent: subscribersLoadedOnce }).catch(() => { });
       }
       if (primaryNav.classList.contains('is-open')) {
         toggleNav(false);
@@ -212,7 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
     subscriberLoading.classList.toggle('hidden', !isLoading);
   }
 
-  function setButtonLoading(button, isLoading, loadingLabel = 'Loadingâ€¦') {
+  function setButtonLoading(button, isLoading, loadingLabel = 'Loading') {
     if (!button) {
       return;
     }
@@ -394,8 +394,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const formData = new FormData();
       formData.append('image', file);
 
-      setInlineStatus(imageUploadStatus, 'Uploading imageâ€¦');
-      setButtonLoading(uploadTrigger, true, 'Uploadingâ€¦');
+      setInlineStatus(imageUploadStatus, 'Uploading image');
+      setButtonLoading(uploadTrigger, true, 'Uploading');
 
       try {
         const response = await fetch('/api/upload-image', {
@@ -520,7 +520,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     setSendStatus('Sending newsletter...');
-    setButtonLoading(sendButton, true, 'Sendingâ€¦');
+    setButtonLoading(sendButton, true, 'Sending');
 
     try {
       const response = await fetch('/api/send-newsletter', {
@@ -556,7 +556,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setSendStatus('Newsletter sent successfully!');
       }
       if (analyticsContent) {
-        loadAnalytics({ silent: true }).catch(() => {});
+        loadAnalytics({ silent: true }).catch(() => { });
       }
     } catch (error) {
       console.error(error);
@@ -583,11 +583,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function formatDate(value) {
     if (!value) {
-      return 'â€”';
+      return '—';
     }
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
-      return 'â€”';
+      return '—';
     }
     return new Intl.DateTimeFormat(undefined, {
       year: 'numeric',
@@ -689,7 +689,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const removeButton = row.querySelector('.remove-subscriber');
 
         emailCell.textContent = subscriber.email || 'Unknown';
-        nameCell.textContent = subscriber.name || 'â€”';
+        nameCell.textContent = subscriber.name || 'No Name provided';
         dateCell.textContent = formatDate(getSubscribedDate(subscriber));
         sourceCell.textContent = formatSource(subscriber.source);
 
@@ -857,7 +857,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const submitButton = addSubscriberForm.querySelector('button[type="submit"]');
     setSubscriberStatus('Adding subscriber...');
-    setButtonLoading(submitButton, true, 'Addingâ€¦');
+    setButtonLoading(submitButton, true, 'Adding');
 
     try {
       const response = await fetch('/api/subscribers', {
@@ -899,8 +899,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const nonPersistentNote = storageMode === 'kv' ? '' : ' (non-persistent)';
       setSubscriberStatus(
-        `Subscriber saved to ${backendLabel} storage${nonPersistentNote} (verified in ${attempts} attempt${
-          attempts === 1 ? '' : 's'
+        `Subscriber saved to ${backendLabel} storage${nonPersistentNote} (verified in ${attempts} attempt${attempts === 1 ? '' : 's'
         }).`,
         storageMode === 'kv' && !storageHealthy,
         { highlightSuccess: storageMode === 'kv' && storageHealthy },
@@ -931,7 +930,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     setSubscriberStatus(`Removing ${email}...`);
-    setButtonLoading(target, true, 'Removingâ€¦');
+    setButtonLoading(target, true, 'Removing');
 
     try {
       const response = await fetch(`/api/subscribers/${encodeURIComponent(email)}`, {
@@ -969,8 +968,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const removalNote = storageMode === 'kv' ? '' : ' (non-persistent)';
       setSubscriberStatus(
-        `Subscriber removed from ${backendLabel} storage${removalNote} (confirmed in ${attempts} attempt${
-          attempts === 1 ? '' : 's'
+        `Subscriber removed from ${backendLabel} storage${removalNote} (confirmed in ${attempts} attempt${attempts === 1 ? '' : 's'
         }).`,
         storageMode === 'kv' && !storageHealthy,
         { highlightSuccess: storageMode === 'kv' && storageHealthy },
@@ -1068,9 +1066,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const delivered =
           Number(
             payload.lastCampaign.delivered ??
-              payload.lastCampaign.successCount ??
-              payload.lastCampaign.sentCount ??
-              0,
+            payload.lastCampaign.successCount ??
+            payload.lastCampaign.sentCount ??
+            0,
           ) || 0;
         const failed =
           Number(payload.lastCampaign.failed ?? payload.lastCampaign.failureCount ?? 0) || 0;
@@ -1274,14 +1272,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (analyticsTab) {
     analyticsTab.addEventListener('click', () => {
       if (!analyticsLoadedOnce) {
-        loadAnalytics().catch(() => {});
+        loadAnalytics().catch(() => { });
       }
     });
   }
 
   if (logoutButton) {
     logoutButton.addEventListener('click', async () => {
-      setButtonLoading(logoutButton, true, 'Logging outâ€¦');
+      setButtonLoading(logoutButton, true, 'Logging out');
       try {
         const response = await fetch('/logout', {
           method: 'POST',
@@ -1313,7 +1311,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   loadDraft();
   if (subscriberRowTemplate && subscriberTableBody) {
-    loadSubscribers().catch(() => {});
+    loadSubscribers().catch(() => { });
   }
   activateView('compose-view');
 });
@@ -1344,12 +1342,12 @@ function initializeCharacterCounters() {
   const titleCounter = document.getElementById('title-char-counter');
   const previewInput = document.getElementById('newsletter-preview-text');
   const previewCounter = document.getElementById('preview-char-counter');
-  
+
   if (titleInput && titleCounter) {
-    titleInput.addEventListener('input', function() {
+    titleInput.addEventListener('input', function () {
       const length = this.value.length;
       titleCounter.textContent = `${length} / 50`;
-      
+
       // Color coding
       if (length > 50) {
         titleCounter.style.color = '#f87171';
@@ -1361,20 +1359,20 @@ function initializeCharacterCounters() {
         titleCounter.style.color = '#6b7280';
         titleCounter.style.fontWeight = 'normal';
       }
-      
+
       updateBestPractices();
     });
-    
+
     if (titleInput.value) {
       titleInput.dispatchEvent(new Event('input'));
     }
   }
-  
+
   if (previewInput && previewCounter) {
-    previewInput.addEventListener('input', function() {
+    previewInput.addEventListener('input', function () {
       const length = this.value.length;
       previewCounter.textContent = `${length} / 150`;
-      
+
       if (length >= 40 && length <= 130) {
         previewCounter.style.color = '#10b981';
       } else if (length > 130) {
@@ -1382,10 +1380,10 @@ function initializeCharacterCounters() {
       } else {
         previewCounter.style.color = '#6b7280';
       }
-      
+
       updateBestPractices();
     });
-    
+
     if (previewInput.value) {
       previewInput.dispatchEvent(new Event('input'));
     }
@@ -1396,16 +1394,16 @@ function initializeCharacterCounters() {
 function initializeWordCount() {
   const contentEditor = document.getElementById('newsletter-content');
   const wordCountEl = document.getElementById('word-count');
-  
+
   if (!contentEditor || !wordCountEl) return;
-  
+
   function updateWordCount() {
     const text = contentEditor.innerText || '';
     const words = text.trim().split(/\s+/).filter(w => w.length > 0);
     const wordCount = words.length;
-    
+
     wordCountEl.textContent = `${wordCount} word${wordCount !== 1 ? 's' : ''}`;
-    
+
     // Update color based on length
     if (wordCount > 1000) {
       wordCountEl.style.color = '#f87171';
@@ -1414,10 +1412,10 @@ function initializeWordCount() {
     } else {
       wordCountEl.style.color = '#6b7280';
     }
-    
+
     updateBestPractices();
   }
-  
+
   contentEditor.addEventListener('input', updateWordCount);
   updateWordCount();
 }
@@ -1429,33 +1427,33 @@ function initializeSpamDetector() {
   const contentEditor = document.getElementById('newsletter-content');
   const spamWarning = document.getElementById('spam-warning');
   const spamWordsList = document.getElementById('spam-words-list');
-  
+
   if (!spamWarning) return;
-  
+
   function checkSpamWords() {
     const title = titleInput?.value.toLowerCase() || '';
     const preview = previewInput?.value.toLowerCase() || '';
     const content = contentEditor?.innerText.toLowerCase() || '';
     const allText = `${title} ${preview} ${content}`;
-    
-    const foundWords = SPAM_WORDS.filter(word => 
+
+    const foundWords = SPAM_WORDS.filter(word =>
       allText.includes(word.toLowerCase())
     );
-    
+
     if (foundWords.length > 0) {
       spamWarning.classList.remove('hidden');
-      spamWordsList.textContent = foundWords.map(w => 
+      spamWordsList.textContent = foundWords.map(w =>
         `"${w}"`
       ).join(', ');
     } else {
       spamWarning.classList.add('hidden');
     }
   }
-  
+
   if (titleInput) titleInput.addEventListener('input', checkSpamWords);
   if (previewInput) previewInput.addEventListener('input', checkSpamWords);
   if (contentEditor) contentEditor.addEventListener('input', checkSpamWords);
-  
+
   checkSpamWords();
 }
 
@@ -1464,13 +1462,13 @@ function updateBestPractices() {
   const titleInput = document.getElementById('newsletter-title');
   const previewInput = document.getElementById('newsletter-preview-text');
   const contentEditor = document.getElementById('newsletter-content');
-  
+
   const title = titleInput?.value || '';
   const preview = previewInput?.value || '';
   const content = contentEditor?.innerHTML || '';
   const text = contentEditor?.innerText || '';
   const words = text.trim().split(/\s+/).filter(w => w.length > 0);
-  
+
   // Check 1: Title filled and < 50 chars
   const checkTitle = document.getElementById('check-title');
   if (title.length > 0 && title.length <= 50) {
@@ -1480,7 +1478,7 @@ function updateBestPractices() {
     checkTitle?.classList.remove('complete');
     checkTitle.querySelector('.check-icon').textContent = '○';
   }
-  
+
   // Check 2: Preview text 40-130 chars
   const checkPreview = document.getElementById('check-preview');
   if (preview.length >= 40 && preview.length <= 130) {
@@ -1490,7 +1488,7 @@ function updateBestPractices() {
     checkPreview?.classList.remove('complete');
     checkPreview.querySelector('.check-icon').textContent = '○';
   }
-  
+
   // Check 3: Has image
   const checkImage = document.getElementById('check-image');
   const hasImage = content.includes('<img');
@@ -1501,7 +1499,7 @@ function updateBestPractices() {
     checkImage?.classList.remove('complete');
     checkImage.querySelector('.check-icon').textContent = '○';
   }
-  
+
   // Check 4: Word count < 1000
   const checkLength = document.getElementById('check-length');
   if (words.length > 0 && words.length <= 1000) {
@@ -1511,7 +1509,7 @@ function updateBestPractices() {
     checkLength?.classList.remove('complete');
     checkLength.querySelector('.check-icon').textContent = '○';
   }
-  
+
   // Check 5: Has CTA
   const checkCta = document.getElementById('check-cta');
   const textLower = text.toLowerCase();
@@ -1529,10 +1527,10 @@ function updateBestPractices() {
 function initializeChecklistToggle() {
   const toggleBtn = document.getElementById('toggle-checklist');
   const checklistItems = document.getElementById('checklist-items');
-  
+
   if (!toggleBtn || !checklistItems) return;
-  
-  toggleBtn.addEventListener('click', function() {
+
+  toggleBtn.addEventListener('click', function () {
     if (checklistItems.classList.contains('hidden')) {
       checklistItems.classList.remove('hidden');
       toggleBtn.textContent = 'Hide';
@@ -1551,18 +1549,18 @@ function saveDraft() {
   const title = document.getElementById('newsletter-title')?.value || '';
   const previewText = document.getElementById('newsletter-preview-text')?.value || '';
   const content = document.getElementById('newsletter-content')?.innerHTML || '';
-  
+
   if (!title && !previewText && !content) {
     return;
   }
-  
+
   const draft = {
     title,
     previewText,
     content,
     savedAt: new Date().toISOString()
   };
-  
+
   try {
     localStorage.setItem('newsletter-draft', JSON.stringify(draft));
     showDraftSavedIndicator();
@@ -1574,7 +1572,7 @@ function saveDraft() {
 function showDraftSavedIndicator() {
   const existing = document.getElementById('draft-saved-indicator');
   if (existing) existing.remove();
-  
+
   const indicator = document.createElement('div');
   indicator.id = 'draft-saved-indicator';
   indicator.textContent = '✓ Draft saved';
@@ -1591,9 +1589,9 @@ function showDraftSavedIndicator() {
     box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     animation: slideIn 0.3s ease-out;
   `;
-  
+
   document.body.appendChild(indicator);
-  
+
   setTimeout(() => {
     indicator.style.animation = 'slideOut 0.3s ease-out';
     setTimeout(() => indicator.remove(), 300);
@@ -1604,11 +1602,11 @@ function loadDraft() {
   try {
     const saved = localStorage.getItem('newsletter-draft');
     if (!saved) return;
-    
+
     const draft = JSON.parse(saved);
     const savedDate = new Date(draft.savedAt);
     const minutesAgo = Math.floor((Date.now() - savedDate.getTime()) / 60000);
-    
+
     let timeText;
     if (minutesAgo < 1) {
       timeText = 'just now';
@@ -1620,16 +1618,16 @@ function loadDraft() {
       const hoursAgo = Math.floor(minutesAgo / 60);
       timeText = hoursAgo === 1 ? '1 hour ago' : `${hoursAgo} hours ago`;
     }
-    
+
     if (confirm(`Found unsaved draft from ${timeText}. Restore it?`)) {
       const titleInput = document.getElementById('newsletter-title');
       const previewInput = document.getElementById('newsletter-preview-text');
       const contentEditor = document.getElementById('newsletter-content');
-      
+
       if (titleInput) titleInput.value = draft.title;
       if (previewInput) previewInput.value = draft.previewText;
       if (contentEditor) contentEditor.innerHTML = draft.content;
-      
+
       if (titleInput) titleInput.dispatchEvent(new Event('input'));
       if (previewInput) previewInput.dispatchEvent(new Event('input'));
       if (contentEditor) contentEditor.dispatchEvent(new Event('input'));
@@ -1642,19 +1640,19 @@ function loadDraft() {
 function clearDraft() {
   try {
     localStorage.removeItem('newsletter-draft');
-    
+
     const titleInput = document.getElementById('newsletter-title');
     const previewInput = document.getElementById('newsletter-preview-text');
     const contentEditor = document.getElementById('newsletter-content');
-    
+
     if (titleInput) titleInput.value = '';
     if (previewInput) previewInput.value = '';
     if (contentEditor) contentEditor.innerHTML = '';
-    
+
     if (titleInput) titleInput.dispatchEvent(new Event('input'));
     if (previewInput) previewInput.dispatchEvent(new Event('input'));
     if (contentEditor) contentEditor.dispatchEvent(new Event('input'));
-    
+
     alert('Draft cleared!');
   } catch (e) {
     console.error('Failed to clear draft:', e);
@@ -1665,16 +1663,16 @@ function startAutoSave() {
   const titleInput = document.getElementById('newsletter-title');
   const previewInput = document.getElementById('newsletter-preview-text');
   const contentEditor = document.getElementById('newsletter-content');
-  
+
   const debouncedSave = () => {
     clearTimeout(autoSaveTimeout);
     autoSaveTimeout = setTimeout(saveDraft, 2000);
   };
-  
+
   if (titleInput) titleInput.addEventListener('input', debouncedSave);
   if (previewInput) previewInput.addEventListener('input', debouncedSave);
   if (contentEditor) contentEditor.addEventListener('input', debouncedSave);
-  
+
   setInterval(saveDraft, AUTOSAVE_INTERVAL);
 }
 
@@ -1682,43 +1680,43 @@ function startAutoSave() {
 function initializeTestEmailButton() {
   const testEmailBtn = document.getElementById('test-email-button');
   if (!testEmailBtn) return;
-  
-  testEmailBtn.addEventListener('click', async function() {
+
+  testEmailBtn.addEventListener('click', async function () {
     const titleInput = document.getElementById('newsletter-title');
     const previewInput = document.getElementById('newsletter-preview-text');
     const contentEditor = document.getElementById('newsletter-content');
     const statusEl = document.getElementById('send-status');
-    
+
     const title = titleInput?.value || '';
     const previewText = previewInput?.value || '';
     const content = contentEditor?.innerHTML || '';
-    
+
     if (!title || !content) {
       alert('Please fill in at least the title and content before sending a test email.');
       return;
     }
-    
+
     if (!confirm('Send a test email to yourself? This will be sent to your admin email.')) {
       return;
     }
-    
+
     testEmailBtn.disabled = true;
     testEmailBtn.innerHTML = '<span class="icon">⏳</span><span>Sending...</span>';
-    
+
     try {
       const response = await fetch('/api/test-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          testEmail: 'admin@example.com', // Will use admin email from server
+          testEmail: 'delivered@resend.dev', // Will use admin email from server
           subject: title,
           previewText: previewText,
           content: content
         })
       });
-      
+
       const data = await response.json();
-      
+
       if (response.ok) {
         if (statusEl) {
           statusEl.textContent = '✓ Test email sent successfully! Check your inbox.';
@@ -1743,7 +1741,7 @@ function initializeTestEmailButton() {
 function initializeClearDraftButton() {
   const clearButton = document.getElementById('clear-draft-button');
   if (clearButton) {
-    clearButton.addEventListener('click', function() {
+    clearButton.addEventListener('click', function () {
       if (confirm('Are you sure you want to clear the draft? This cannot be undone.')) {
         clearDraft();
       }
@@ -1754,7 +1752,7 @@ function initializeClearDraftButton() {
 function initializeSaveDraftButton() {
   const saveButton = document.getElementById('save-draft-button');
   if (saveButton) {
-    saveButton.addEventListener('click', function() {
+    saveButton.addEventListener('click', function () {
       saveDraft();
     });
   }
@@ -1772,7 +1770,7 @@ function initializeComposingImprovements() {
   initializeClearDraftButton();
   initializeSaveDraftButton();
   initializeTestEmailButton();
-  
+
   // Update checklist when content changes
   const contentEditor = document.getElementById('newsletter-content');
   if (contentEditor) {
@@ -1782,7 +1780,7 @@ function initializeComposingImprovements() {
 
 // Initialize when DOM is ready
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', function() {
+  document.addEventListener('DOMContentLoaded', function () {
     setTimeout(initializeComposingImprovements, 100);
   });
 } else {
