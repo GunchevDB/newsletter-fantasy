@@ -3551,18 +3551,17 @@ function initializeTestEmailButton() {
     });
 
     try {
-      const response = await fetch('/api/test-email', {
+      const response = await fetch('/api/preview-newsletter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          testEmail: 'delivered@resend.dev', // Will use admin email from server
           subject: title,
-          previewText: previewText,
-          content: content
-        })
+          previewText,
+          content,
+        }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
         if (statusEl) {
@@ -3574,7 +3573,7 @@ function initializeTestEmailButton() {
           description: 'Check your inbox to review the message.',
         });
       } else {
-        throw new Error(data.error || 'Test email failed to send.');
+        throw new Error(data?.message || data?.error || 'Test email failed to send.');
       }
     } catch (error) {
       if (statusEl) {

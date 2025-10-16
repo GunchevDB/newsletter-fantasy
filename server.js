@@ -3211,6 +3211,86 @@ app.get('/api/analytics', ensureAuthenticatedApi, async (req, res) => {
 });
 
 /**
+ * Send newsletter content as a preview email to the configured admin.
+ */
+app.post('/api/preview-newsletter', ensureAuthenticatedApi, async (req, res) => {
+  const { subject, previewText, content } = req.body || {};
+
+  if (!subject || !content) {
+    res.status(400).json({ message: 'Subject and content are required.' });
+    return;
+  }
+
+  const adminEmail = process.env.ADMIN_EMAIL || process.env.SENDER_EMAIL;
+
+  if (!adminEmail || !isValidEmail(adminEmail)) {
+    res.status(500).json({
+      message: 'Admin email not configured. Add ADMIN_EMAIL to your environment file.',
+    });
+    return;
+  }
+
+  if (!isValidEmail(senderEmail)) {
+    logger.error('SENDER_EMAIL invalid during preview-newsletter send.', { senderEmail });
+    res.status(500).json({
+      message: 'SENDER_EMAIL is not valid. Update your configuration.',
+    });
+    return;
+  }
+
+  const sanitizedContent = sanitizeHtml(content, sanitizerOptions);
+  const baseUrl =
+    (appUrl && appUrl.trim()) || `${req.protocol}://${req.get('host') || 'localhost'}`;
+  const unsubscribeLink = `${baseUrl.replace(/\/$/, '')}/unsubscribe?email=${encodeURIComponent(
+    adminEmail,
+  )}`;
+
+  const htmlBody = buildEmailTemplate(
+    subject,
+    sanitizedContent,
+    previewText || '',
+    unsubscribeLink,
+  );
+
+  const plainTextBody = `${stripHtml(sanitizedContent)}
+
+Unsubscribe: ${unsubscribeLink}`;
+
+  const emailPayload = {
+    from: senderEmail,
+    to: [adminEmail],
+    subject: `[PREVIEW] ${subject}`,
+    html: htmlBody,
+    text: plainTextBody,
+  };
+
+  const sendResult = await sendWithResend(emailPayload, {
+    endpoint: 'preview-newsletter',
+    target: adminEmail,
+  });
+
+  if (!sendResult.success) {
+    const resendError = sendResult.error;
+    res.status(502).json({
+      message: 'Preview email failed to send.',
+      details: resendError?.message || 'Unknown error.',
+      statusCode: resendError?.statusCode,
+    });
+    return;
+  }
+
+  logger.info('Preview email sent successfully.', {
+    id: sendResult.data?.id,
+    durationMs: sendResult.durationMs,
+  });
+
+  res.status(200).json({
+    message: 'Preview email sent successfully.',
+    id: sendResult.data?.id,
+  });
+});
+
+/**
  * Send a single test email for diagnostics purposes.
  */
 app.post('/api/test-email', ensureAuthenticatedApi, async (req, res) => {
