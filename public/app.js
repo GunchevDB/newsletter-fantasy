@@ -4,6 +4,118 @@
  * image uploads, draft persistence, and sending newsletters.
  */
 
+const TOAST_DEFAULT_DURATION = 6000;
+const TOAST_TYPES = new Set(['success', 'error', 'warning', 'info']);
+const TOAST_ICONS = {
+  success: '✅',
+  error: '⛔',
+  warning: '⚠️',
+  info: 'ℹ️',
+};
+let toastCounter = 0;
+
+function getToastContainer() {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  let container = document.getElementById('toast-container');
+  if (!container && document.body) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    container.setAttribute('aria-live', 'polite');
+    container.setAttribute('aria-atomic', 'true');
+    document.body.appendChild(container);
+  }
+  return container || null;
+}
+
+function removeToastElement(element) {
+  if (!element || element.dataset.leaving === 'true') {
+    return;
+  }
+  element.dataset.leaving = 'true';
+  window.setTimeout(() => {
+    element.remove();
+  }, 220);
+}
+
+function showToast(message, options = {}) {
+  if (typeof document === 'undefined' || !message) {
+    return null;
+  }
+  const container = getToastContainer();
+  if (!container) {
+    return null;
+  }
+
+  const {
+    type = 'info',
+    description = '',
+    duration = TOAST_DEFAULT_DURATION,
+  } = options;
+
+  const normalizedType = TOAST_TYPES.has(type) ? type : 'info';
+  const toast = document.createElement('div');
+  const toastId = `toast-${Date.now()}-${toastCounter += 1}`;
+  toast.className = `toast toast--${normalizedType}`;
+  toast.dataset.toastId = toastId;
+  toast.setAttribute('role', normalizedType === 'error' ? 'alert' : 'status');
+
+  const icon = document.createElement('div');
+  icon.className = 'toast-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = TOAST_ICONS[normalizedType] || TOAST_ICONS.info;
+  toast.appendChild(icon);
+
+  const content = document.createElement('div');
+  content.className = 'toast-content';
+  const title = document.createElement('p');
+  title.className = 'toast-title';
+  title.textContent = message;
+  content.appendChild(title);
+
+  if (description) {
+    const descriptionEl = document.createElement('p');
+    descriptionEl.className = 'toast-description';
+    descriptionEl.textContent = description;
+    content.appendChild(descriptionEl);
+  }
+
+  toast.appendChild(content);
+
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'toast-close';
+  closeButton.setAttribute('aria-label', 'Dismiss notification');
+  closeButton.textContent = '\u2715';
+  toast.appendChild(closeButton);
+
+  container.appendChild(toast);
+
+  let dismissalTimeout = null;
+
+  const dismiss = () => {
+    window.clearTimeout(dismissalTimeout);
+    removeToastElement(toast);
+  };
+
+  closeButton.addEventListener('click', dismiss);
+  toast.addEventListener('mouseenter', () => window.clearTimeout(dismissalTimeout));
+  toast.addEventListener('mouseleave', () => {
+    if (!duration || duration <= 0) {
+      return;
+    }
+    dismissalTimeout = window.setTimeout(dismiss, Math.max(duration / 2, 1200));
+  });
+
+  if (duration && duration > 0) {
+    dismissalTimeout = window.setTimeout(dismiss, duration);
+  }
+
+  return { id: toastId, dismiss };
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const DOMPURIFY_CONFIG = {
     USE_PROFILES: { html: true },
@@ -137,6 +249,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let subscribersLoadedOnce = false;
   let analyticsLoadedOnce = false;
   let analyticsChart = null; // Holds the Chart.js instance so we can update or destroy between refreshes.
+  let releasePreviewFocusTrap = null;
+  let previouslyFocusedElement = null;
 
   if (toggleAddSubscriberButton) {
     toggleAddSubscriberButton.dataset.defaultContent = toggleAddSubscriberButton.innerHTML;
@@ -158,12 +272,33 @@ document.addEventListener('DOMContentLoaded', () => {
     previewCounter.classList.toggle('limit-reached', length >= PREVIEW_MAX_LENGTH);
   }
 
-  function setSendStatus(message, isError = false) {
+  function setSendStatus(message, isError = false, options = {}) {
     if (!sendStatus) {
       return;
     }
     sendStatus.textContent = message;
-    sendStatus.classList.toggle('is-error', isError);
+    sendStatus.classList.remove('is-error', 'is-success');
+    if (!message) {
+      return;
+    }
+    const { variant, toast } = options;
+    const resolvedVariant = variant || (isError ? 'error' : 'info');
+    if (resolvedVariant === 'error') {
+      sendStatus.classList.add('is-error');
+    } else if (resolvedVariant === 'success') {
+      sendStatus.classList.add('is-success');
+    }
+    if (toast) {
+      const toastConfig = typeof toast === 'object' ? toast : {};
+      const toastTitle = toastConfig.title || message;
+      const toastType = toastConfig.type
+        || (resolvedVariant === 'error' ? 'error' : resolvedVariant === 'success' ? 'success' : 'info');
+      showToast(toastTitle, {
+        type: toastType,
+        description: toastConfig.description,
+        duration: toastConfig.duration,
+      });
+    }
   }
 
   function setInlineStatus(element, message, isError = false) {
@@ -183,11 +318,22 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!message) {
       return;
     }
-    const { highlightSuccess = false } = options;
+    const { highlightSuccess = false, toast } = options;
     if (isError) {
       subscriberStatus.classList.add('is-error');
     } else if (highlightSuccess) {
       subscriberStatus.classList.add('is-success');
+    }
+    if (toast) {
+      const toastConfig = typeof toast === 'object' ? toast : {};
+      const toastTitle = toastConfig.title || message;
+      const toastType = toastConfig.type
+        || (isError ? 'error' : highlightSuccess ? 'success' : 'info');
+      showToast(toastTitle, {
+        type: toastType,
+        description: toastConfig.description,
+        duration: toastConfig.duration,
+      });
     }
   }
 
@@ -203,6 +349,63 @@ document.addEventListener('DOMContentLoaded', () => {
       return true;
     }
     return false;
+  }
+
+  const FOCUSABLE_SELECTORS = [
+    'a[href]',
+    'button:not([disabled])',
+    'textarea:not([disabled])',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(', ');
+
+  function isFocusableElement(element) {
+    if (!element) {
+      return false;
+    }
+    if (element.hasAttribute('disabled')) {
+      return false;
+    }
+    if (element.getAttribute('aria-hidden') === 'true') {
+      return false;
+    }
+    const tabIndexAttr = element.getAttribute('tabindex');
+    if (tabIndexAttr !== null && Number(tabIndexAttr) < 0) {
+      return false;
+    }
+    const rects = element.getClientRects();
+    return rects.length > 0;
+  }
+
+  function createFocusTrap(container) {
+    if (!container) {
+      return () => { };
+    }
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Tab') {
+        return;
+      }
+      const focusable = Array.from(container.querySelectorAll(FOCUSABLE_SELECTORS))
+        .filter(isFocusableElement);
+      if (focusable.length === 0) {
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement;
+      if (event.shiftKey) {
+        if (activeElement === first || !container.contains(activeElement)) {
+          event.preventDefault();
+          last.focus({ preventScroll: true });
+        }
+      } else if (activeElement === last) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    };
+    container.addEventListener('keydown', handleKeyDown);
+    return () => container.removeEventListener('keydown', handleKeyDown);
   }
 
   function setSubscriberLoading(isLoading) {
@@ -329,10 +532,21 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!previewModal) {
       return;
     }
+    previouslyFocusedElement =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     previewModal.classList.remove('hidden');
     document.body.classList.add('modal-open');
-    setTimeout(() => {
-      previewClose?.focus({ preventScroll: true });
+    if (typeof releasePreviewFocusTrap === 'function') {
+      releasePreviewFocusTrap();
+    }
+    releasePreviewFocusTrap = createFocusTrap(previewModal);
+    window.setTimeout(() => {
+      if (previewClose) {
+        previewClose.focus({ preventScroll: true });
+      } else {
+        const firstFocusable = previewModal.querySelector(FOCUSABLE_SELECTORS);
+        firstFocusable?.focus({ preventScroll: true });
+      }
     }, 50);
   }
 
@@ -342,7 +556,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     previewModal.classList.add('hidden');
     document.body.classList.remove('modal-open');
-    previewButton?.focus({ preventScroll: true });
+    if (typeof releasePreviewFocusTrap === 'function') {
+      releasePreviewFocusTrap();
+      releasePreviewFocusTrap = null;
+    }
+    const fallbackTarget =
+      previouslyFocusedElement && document.body.contains(previouslyFocusedElement)
+        ? previouslyFocusedElement
+        : previewButton;
+    fallbackTarget?.focus({ preventScroll: true });
+    previouslyFocusedElement = null;
   }
 
   // Compose interactions -------------------------------------------------------
@@ -460,7 +683,7 @@ document.addEventListener('DOMContentLoaded', () => {
   modalBackdrop?.addEventListener('click', hidePreviewModal);
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !previewModal.classList.contains('hidden')) {
+    if (event.key === 'Escape' && previewModal && !previewModal.classList.contains('hidden')) {
       hidePreviewModal();
     }
   });
@@ -488,7 +711,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function saveDraft() {
+  function saveDraft(options = {}) {
+    const { announce = false } = options;
     const draft = {
       title: titleInput.value,
       previewText: previewTextInput.value,
@@ -497,16 +721,41 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     try {
       localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
-      setSendStatus('Draft saved locally.');
+      const statusOptions = announce
+        ? {
+            variant: 'success',
+            toast: {
+              title: 'Draft saved',
+              type: 'success',
+              description: 'Stored safely in this browser for you.',
+            },
+          }
+        : {};
+      setSendStatus('Draft saved locally.', false, statusOptions);
     } catch (error) {
       console.warn('Failed to save draft.', error);
-      setSendStatus('Could not save draft locally.', true);
+      const errorOptions = {
+        variant: 'error',
+        ...(announce
+          ? {
+            toast: {
+              title: 'Draft not saved',
+              type: 'error',
+              description: 'Check storage permissions and try again.',
+            },
+          }
+          : {}),
+      };
+      setSendStatus('Could not save draft locally.', true, errorOptions);
     }
   }
 
-  saveDraftButton?.addEventListener('click', () => {
-    saveDraft();
-  });
+  if (saveDraftButton) {
+    saveDraftButton.addEventListener('click', () => {
+      saveDraft({ announce: true });
+    });
+    saveDraftButton.dataset.enhancedSave = 'true';
+  }
 
   sendButton?.addEventListener('click', async () => {
     const title = titleInput.value.trim();
@@ -543,24 +792,69 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (!response.ok) {
         const detailText = result?.details ? ` (${result.details})` : '';
-        throw new Error((result?.message || 'Failed to send newsletter.') + detailText);
+        const error = new Error((result?.message || 'Failed to send newsletter.') + detailText);
+        if (Array.isArray(result?.suggestions) && result.suggestions.length > 0) {
+          error.toastDescription = result.suggestions.join(' · ');
+        }
+        throw error;
       }
 
       const summary = result?.summary;
       if (summary) {
-        const sent = summary.sentCount ?? summary.successes?.length ?? 0;
-        const failed = summary.failedCount ?? summary.failures?.length ?? 0;
-        const partialNote = failed > 0 ? ` (with ${failed} issues)` : '';
-        setSendStatus(`Newsletter sent successfully to ${sent} subscriber(s)${partialNote}.`);
+        const sent = Number(summary.sentCount ?? summary.successes?.length ?? 0);
+        const failed = Number(summary.failedCount ?? summary.failures?.length ?? 0);
+        const skipped = Number(summary.skippedCount ?? summary.skipped?.length ?? 0);
+        const partial = failed > 0;
+        const message = partial
+          ? `Newsletter sent with ${failed} issue${failed === 1 ? '' : 's'}.`
+          : `Newsletter sent successfully to ${sent} subscriber${sent === 1 ? '' : 's'}.`;
+        const detailParts = [];
+        if (sent > 0) {
+          detailParts.push(`${sent.toLocaleString()} delivered`);
+        }
+        if (failed > 0) {
+          detailParts.push(`${failed.toLocaleString()} failed`);
+        }
+        if (skipped > 0) {
+          detailParts.push(`${skipped.toLocaleString()} skipped`);
+        }
+        if (result?.campaignId) {
+          detailParts.push(`Campaign ${result.campaignId}`);
+        }
+        setSendStatus(message, false, {
+          variant: 'success',
+          toast: {
+            title: partial ? 'Newsletter sent with warnings' : 'Newsletter sent',
+            type: partial ? 'warning' : 'success',
+            description: detailParts.join(' · '),
+          },
+        });
       } else {
-        setSendStatus('Newsletter sent successfully!');
+        const toastDescription = result?.campaignId ? `Campaign ${result.campaignId}` : '';
+        setSendStatus('Newsletter sent successfully!', false, {
+          variant: 'success',
+          toast: {
+            title: 'Newsletter sent',
+            type: 'success',
+            description: toastDescription,
+          },
+        });
       }
       if (analyticsContent) {
         loadAnalytics({ silent: true }).catch(() => { });
       }
     } catch (error) {
       console.error(error);
-      setSendStatus(error.message || 'Could not send newsletter.', true);
+      const toastDescription =
+        typeof error?.toastDescription === 'string' ? error.toastDescription : '';
+      setSendStatus(error.message || 'Could not send newsletter.', true, {
+        variant: 'error',
+        toast: {
+          title: 'Send failed',
+          type: 'error',
+          description: toastDescription,
+        },
+      });
     } finally {
       setButtonLoading(sendButton, false);
     }
@@ -791,7 +1085,13 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (error) {
       console.error(error);
       if (!silent) {
-        setSubscriberStatus(error.message || 'Could not load subscribers.', true);
+        setSubscriberStatus(error.message || 'Could not load subscribers.', true, {
+          toast: {
+            title: 'Subscriber list unavailable',
+            type: 'error',
+            description: 'Please try refreshing in a moment.',
+          },
+        });
       }
       return false;
     } finally {
@@ -831,7 +1131,7 @@ document.addEventListener('DOMContentLoaded', () => {
     toggleAddSubscriberButton.setAttribute('aria-expanded', String(shouldOpen));
     if (shouldOpen) {
       toggleAddSubscriberButton.innerHTML =
-        '<span class="icon" aria-hidden="true">âœ–ï¸</span><span>Close form</span>';
+        '<span class="icon" aria-hidden="true">&#x2715;</span><span>Close form</span>';
       subscriberEmailInput?.focus({ preventScroll: true });
     } else {
       toggleAddSubscriberButton.innerHTML =
@@ -850,7 +1150,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const name = subscriberNameInput.value.trim();
 
     if (!email) {
-      setSubscriberStatus('Please enter an email address.', true);
+      setSubscriberStatus('Please enter an email address.', true, {
+        toast: {
+          title: 'Email required',
+          type: 'error',
+          description: 'Provide an email address before adding a subscriber.',
+        },
+      });
       subscriberEmailInput.focus();
       return;
     }
@@ -898,17 +1204,41 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const nonPersistentNote = storageMode === 'kv' ? '' : ' (non-persistent)';
+      const toastType =
+        storageMode === 'kv' && !storageHealthy ? 'warning' : 'success';
+      const toastDetails = [
+        `Stored via ${backendLabel}`,
+        `Verification ${attempts} attempt${attempts === 1 ? '' : 's'}`,
+      ];
+      if (storageMode !== 'kv') {
+        toastDetails.push('Data resets on restart');
+      } else if (!storageHealthy) {
+        toastDetails.push('Check KV connection health');
+      }
       setSubscriberStatus(
         `Subscriber saved to ${backendLabel} storage${nonPersistentNote} (verified in ${attempts} attempt${attempts === 1 ? '' : 's'
         }).`,
         storageMode === 'kv' && !storageHealthy,
-        { highlightSuccess: storageMode === 'kv' && storageHealthy },
+        {
+          highlightSuccess: storageMode === 'kv' && storageHealthy,
+          toast: {
+            title: `Subscriber added${email ? ` (${email})` : ''}`,
+            type: toastType,
+            description: toastDetails.join(' · '),
+          },
+        },
       );
       toggleAddSubscriberForm(false);
       await loadSubscribers({ silent: true });
     } catch (error) {
       console.error(error);
-      setSubscriberStatus(error.message || 'Could not add subscriber.', true);
+      setSubscriberStatus(error.message || 'Could not add subscriber.', true, {
+        toast: {
+          title: 'Could not add subscriber',
+          type: 'error',
+          description: email ? `There was an issue adding ${email}.` : '',
+        },
+      });
     } finally {
       setButtonLoading(submitButton, false);
     }
@@ -967,16 +1297,40 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const removalNote = storageMode === 'kv' ? '' : ' (non-persistent)';
+      const toastType =
+        storageMode === 'kv' && !storageHealthy ? 'warning' : 'success';
+      const toastDetails = [
+        `Removed from ${backendLabel}`,
+        `Confirmed in ${attempts} attempt${attempts === 1 ? '' : 's'}`,
+      ];
+      if (storageMode !== 'kv') {
+        toastDetails.push('Data resets on restart');
+      } else if (!storageHealthy) {
+        toastDetails.push('KV connection degraded');
+      }
       setSubscriberStatus(
         `Subscriber removed from ${backendLabel} storage${removalNote} (confirmed in ${attempts} attempt${attempts === 1 ? '' : 's'
         }).`,
         storageMode === 'kv' && !storageHealthy,
-        { highlightSuccess: storageMode === 'kv' && storageHealthy },
+        {
+          highlightSuccess: storageMode === 'kv' && storageHealthy,
+          toast: {
+            title: `Subscriber removed${email ? ` (${email})` : ''}`,
+            type: toastType,
+            description: toastDetails.join(' · '),
+          },
+        },
       );
       await loadSubscribers({ silent: true });
     } catch (error) {
       console.error(error);
-      setSubscriberStatus(error.message || 'Could not remove subscriber.', true);
+      setSubscriberStatus(error.message || 'Could not remove subscriber.', true, {
+        toast: {
+          title: 'Could not remove subscriber',
+          type: 'error',
+          description: email ? `There was an issue removing ${email}.` : '',
+        },
+      });
     } finally {
       setButtonLoading(target, false);
     }
@@ -1653,7 +2007,10 @@ function clearDraft() {
     if (previewInput) previewInput.dispatchEvent(new Event('input'));
     if (contentEditor) contentEditor.dispatchEvent(new Event('input'));
 
-    alert('Draft cleared!');
+    showToast('Draft cleared', {
+      type: 'success',
+      description: 'Local draft data has been removed from this browser.',
+    });
   } catch (e) {
     console.error('Failed to clear draft:', e);
   }
@@ -1692,7 +2049,14 @@ function initializeTestEmailButton() {
     const content = contentEditor?.innerHTML || '';
 
     if (!title || !content) {
-      alert('Please fill in at least the title and content before sending a test email.');
+      if (statusEl) {
+        statusEl.textContent = 'Fill in the title and content before sending a test email.';
+        statusEl.style.color = '#f87171';
+      }
+      showToast('Add content before testing', {
+        type: 'error',
+        description: 'Enter a title and body before sending yourself a preview.',
+      });
       return;
     }
 
@@ -1722,6 +2086,10 @@ function initializeTestEmailButton() {
           statusEl.textContent = '✓ Test email sent successfully! Check your inbox.';
           statusEl.style.color = '#10b981';
         }
+        showToast('Test email sent', {
+          type: 'success',
+          description: 'Check your inbox to review the message.',
+        });
       } else {
         throw new Error(data.error || 'Failed to send test email');
       }
@@ -1730,6 +2098,9 @@ function initializeTestEmailButton() {
         statusEl.textContent = `✗ Error: ${error.message}`;
         statusEl.style.color = '#f87171';
       }
+      showToast(error.message || 'Failed to send test email.', {
+        type: 'error',
+      });
     } finally {
       testEmailBtn.disabled = false;
       testEmailBtn.innerHTML = '<span class="icon">✉️</span><span>Send test email</span>';
@@ -1752,6 +2123,9 @@ function initializeClearDraftButton() {
 function initializeSaveDraftButton() {
   const saveButton = document.getElementById('save-draft-button');
   if (saveButton) {
+    if (saveButton.dataset.enhancedSave === 'true') {
+      return;
+    }
     saveButton.addEventListener('click', function () {
       saveDraft();
     });
