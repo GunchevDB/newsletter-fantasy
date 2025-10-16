@@ -13,6 +13,75 @@ const TOAST_ICONS = {
   info: 'ℹ️',
 };
 const MAX_IMAGE_UPLOAD_SIZE = 5 * 1024 * 1024;
+const TEMPLATE_STORAGE_KEY = 'newsletter-templates';
+const BUILT_IN_TEMPLATES = [
+  {
+    id: 'builtin-product-update',
+    name: 'Product Update Template',
+    title: "New Features You'll Love",
+    previewText: "Discover what's new in this month's update",
+    content: `
+      <p>Hi there,</p>
+      <p>We're excited to share the enhancements we released this month:</p>
+      <ul>
+        <li><strong>Smarter dashboards:</strong> Real-time insights with customizable widgets.</li>
+        <li><strong>Collaboration spaces:</strong> Invite teammates, leave comments, and track decisions.</li>
+        <li><strong>Mobile polish:</strong> A refreshed app with faster navigation and offline access.</li>
+      </ul>
+      <p>If you haven’t explored the updates yet, now’s the perfect time.</p>
+      <p><a href="#" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#2563eb;color:#ffffff;text-decoration:none;">Explore the new features →</a></p>
+      <p>Thanks for building with us,<br>The Product Team</p>
+    `,
+    isBuiltIn: true,
+    createdAt: '2024-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'builtin-news-digest',
+    name: 'News Digest Template',
+    title: "This Week's Top Stories",
+    previewText: 'Stay informed with our weekly roundup',
+    content: `
+      <p>Hello reader,</p>
+      <p>Here’s everything you need to know this week:</p>
+      <h3>Stories Worth Noting</h3>
+      <ul>
+        <li><strong>Industry Spotlight:</strong> <a href="#">Major trend shaping the market</a></li>
+        <li><strong>Customer win:</strong> How teams like yours are thriving with our tools.</li>
+        <li><strong>One big idea:</strong> Insight from our research desk to help you plan ahead.</li>
+      </ul>
+      <h3>Resources &amp; Deep Dives</h3>
+      <p>• <a href="#">Webinar replay:</a> Making the most of your data stack.<br>
+         • <a href="#">Playbook:</a> A 5-step approach to launching faster.</p>
+      <p>See something we should include next week? Hit reply and tell us!</p>
+      <p>Until next time,<br>The Editorial Team</p>
+    `,
+    isBuiltIn: true,
+    createdAt: '2024-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'builtin-event-announcement',
+    name: 'Event Announcement Template',
+    title: "You're Invited: [Event Name]",
+    previewText: 'Join us for an exciting event',
+    content: `
+      <p>Hello friend,</p>
+      <p>We’re thrilled to invite you to <strong>[Event Name]</strong> — an immersive session designed to help you connect, learn, and grow.</p>
+      <p><strong>Date:</strong> [Month] [Day], [Year]<br>
+         <strong>Time:</strong> [Start time] – [End time] [Timezone]<br>
+         <strong>Location:</strong> [Venue or virtual link]</p>
+      <p>What to expect:</p>
+      <ul>
+        <li>Inspiring speakers and practical workshops.</li>
+        <li>Hands-on demos of upcoming features.</li>
+        <li>Networking with peers and the product team.</li>
+      </ul>
+      <p><a href="#" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#10b981;color:#ffffff;text-decoration:none;">Reserve your spot →</a></p>
+      <p>We hope to see you there!<br>The Events Team</p>
+    `,
+    isBuiltIn: true,
+    createdAt: '2024-01-01T00:00:00.000Z',
+  },
+];
 let toastCounter = 0;
 
 function getToastContainer() {
@@ -248,6 +317,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const sendConfirmMessage = document.getElementById('send-confirm-message');
   const sendConfirmCount = document.getElementById('send-confirm-count');
   const sendConfirmBackdrop = sendConfirmModal?.querySelector('[data-close-modal]');
+  const templateMenuButton = document.getElementById('template-menu-button');
+  const templateMenu = document.getElementById('template-menu');
+  const saveTemplateButton = document.getElementById('save-template-button');
+  const templateManageModal = document.getElementById('template-manage-modal');
+  const templateManageClose = document.getElementById('template-manage-close');
+  const templateManageCloseFooter = document.getElementById('template-manage-close-footer');
+  const templateManageList = document.getElementById('template-manage-list');
+  const templateEmptyState = document.getElementById('template-empty-state');
+  const templateManageBackdrop = templateManageModal?.querySelector('[data-close-modal]');
+  const templateSaveModal = document.getElementById('template-save-modal');
+  const templateSaveClose = document.getElementById('template-save-close');
+  const templateSaveCancel = document.getElementById('template-save-cancel');
+  const templateSaveConfirm = document.getElementById('template-save-confirm');
+  const templateNameInput = document.getElementById('template-name-input');
+  const templateSaveBackdrop = templateSaveModal?.querySelector('[data-close-modal]');
 
   // Subscriber references ------------------------------------------------------
   const subscriberRowTemplate = document.getElementById('subscriber-row-template');
@@ -294,6 +378,12 @@ document.addEventListener('DOMContentLoaded', () => {
   let lastFocusedBeforePreview = null;
   let lastFocusedBeforeSendConfirm = null;
   let isSendingNewsletter = false;
+  let templateMenuOpen = false;
+  let customTemplates = [];
+  let releaseTemplateManageFocusTrap = null;
+  let releaseTemplateSaveFocusTrap = null;
+  let lastFocusedBeforeTemplateManage = null;
+  let lastFocusedBeforeTemplateSave = null;
 
   if (toggleAddSubscriberButton) {
     toggleAddSubscriberButton.dataset.defaultContent = toggleAddSubscriberButton.innerHTML;
@@ -379,6 +469,503 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
   }
+
+  function loadCustomTemplatesFromStorage() {
+    try {
+      const raw = localStorage.getItem(TEMPLATE_STORAGE_KEY);
+      if (!raw) {
+        return [];
+      }
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parsed
+        .map((record) => ({
+          id: String(record?.id ?? Date.now().toString()),
+          name: String(record?.name || 'Untitled template').trim() || 'Untitled template',
+          title: typeof record?.title === 'string' ? record.title : '',
+          previewText: typeof record?.previewText === 'string' ? record.previewText : '',
+          content: typeof record?.content === 'string' ? record.content : '',
+          isBuiltIn: false,
+          createdAt: record?.createdAt || new Date().toISOString(),
+        }))
+        .filter(
+          (template, index, list) =>
+            list.findIndex((other) => String(other.id) === String(template.id)) === index,
+        )
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    } catch (error) {
+      console.warn('Failed to load templates from storage.', error);
+      return [];
+    }
+  }
+
+  function persistCustomTemplates(nextTemplates) {
+    customTemplates = nextTemplates
+      .map((template) => ({
+        id: String(template.id || Date.now().toString()),
+        name: String(template.name || 'Untitled template').trim() || 'Untitled template',
+        title: template.title || '',
+        previewText: template.previewText || '',
+        content: template.content || '',
+        isBuiltIn: false,
+        createdAt: template.createdAt || new Date().toISOString(),
+      }))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    try {
+      localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(customTemplates));
+    } catch (error) {
+      console.warn('Failed to persist templates.', error);
+    }
+  }
+
+  function getAllTemplates() {
+    const builtIns = BUILT_IN_TEMPLATES.map((template) => ({
+      ...template,
+      content: (template.content || '').trim(),
+    }));
+    const customs = customTemplates.map((template) => ({
+      ...template,
+      content: (template.content || '').trim(),
+      isBuiltIn: false,
+    }));
+    return [...builtIns, ...customs];
+  }
+
+  function findTemplateById(templateId) {
+    if (!templateId) {
+      return null;
+    }
+    const idString = String(templateId);
+    return getAllTemplates().find((template) => String(template.id) === idString) || null;
+  }
+
+  function stripHtmlToPreview(html, limit = 140) {
+    if (!html) {
+      return '';
+    }
+    const parser = document.createElement('div');
+    parser.innerHTML = html;
+    const text = (parser.textContent || parser.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!limit || text.length <= limit) {
+      return text;
+    }
+    return `${text.slice(0, limit).trim()}…`;
+  }
+
+  function renderTemplateMenu() {
+    if (!templateMenu) {
+      return;
+    }
+    templateMenu.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    const builtIns = BUILT_IN_TEMPLATES;
+    const savedTemplates = customTemplates;
+
+    const addSection = (label, templates) => {
+      if (!templates.length) {
+        return;
+      }
+      const sectionLabel = document.createElement('div');
+      sectionLabel.className = 'template-menu-section';
+      sectionLabel.textContent = label;
+      fragment.appendChild(sectionLabel);
+
+      templates.forEach((template) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute('role', 'menuitem');
+        button.dataset.templateId = template.id;
+        button.dataset.templateBuiltIn = template.isBuiltIn ? 'true' : 'false';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = template.name;
+        button.appendChild(nameSpan);
+
+        const note = template.previewText?.trim()
+          || stripHtmlToPreview(template.content, 60);
+        if (note) {
+          const noteSpan = document.createElement('span');
+          noteSpan.className = 'menu-note';
+          noteSpan.textContent = note;
+          button.appendChild(noteSpan);
+        }
+
+        fragment.appendChild(button);
+      });
+    };
+
+    addSection('Built-in templates', builtIns);
+    if (builtIns.length && savedTemplates.length) {
+      const divider = document.createElement('div');
+      divider.className = 'menu-divider';
+      fragment.appendChild(divider);
+    }
+    addSection('Saved templates', savedTemplates);
+
+    const manageDivider = document.createElement('div');
+    manageDivider.className = 'menu-divider';
+    fragment.appendChild(manageDivider);
+
+    const manageButton = document.createElement('button');
+    manageButton.type = 'button';
+    manageButton.dataset.menuAction = 'manage';
+    manageButton.setAttribute('role', 'menuitem');
+    manageButton.textContent = 'Manage templates';
+    fragment.appendChild(manageButton);
+
+    templateMenu.appendChild(fragment);
+  }
+
+  function handleTemplateMenuClick(event) {
+    const targetButton = event.target.closest('button');
+    if (!targetButton) {
+      return;
+    }
+    const action = targetButton.dataset.menuAction;
+    if (action === 'manage') {
+      event.preventDefault();
+      closeTemplateMenu();
+      openTemplateManageModal();
+      return;
+    }
+    const templateId = targetButton.dataset.templateId;
+    if (!templateId) {
+      return;
+    }
+    closeTemplateMenu();
+    const template = findTemplateById(templateId);
+    requestTemplateLoad(template, { source: 'menu' });
+  }
+
+  function handleDocumentClickForTemplateMenu(event) {
+    if (!templateMenuOpen) {
+      return;
+    }
+    if (templateMenu?.contains(event.target) || templateMenuButton?.contains(event.target)) {
+      return;
+    }
+    closeTemplateMenu();
+  }
+
+  function openTemplateMenu() {
+    if (!templateMenuButton || !templateMenu) {
+      return;
+    }
+    renderTemplateMenu();
+    templateMenu.classList.remove('hidden');
+    templateMenuButton.setAttribute('aria-expanded', 'true');
+    templateMenuOpen = true;
+  }
+
+  function closeTemplateMenu() {
+    if (!templateMenuButton || !templateMenu) {
+      return;
+    }
+    templateMenu.classList.add('hidden');
+    templateMenuButton.setAttribute('aria-expanded', 'false');
+    templateMenuOpen = false;
+  }
+
+  function openTemplateSaveModal() {
+    if (!templateSaveModal) {
+      return;
+    }
+    closeTemplateMenu();
+    lastFocusedBeforeTemplateSave =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (templateNameInput) {
+      templateNameInput.value = titleInput?.value?.trim() || '';
+    }
+    templateSaveModal.classList.remove('hidden');
+    document.body.classList.add('modal-open');
+    if (typeof releaseTemplateSaveFocusTrap === 'function') {
+      releaseTemplateSaveFocusTrap();
+    }
+    releaseTemplateSaveFocusTrap = createFocusTrap(templateSaveModal);
+    window.setTimeout(() => {
+      templateNameInput?.focus({ preventScroll: true });
+      templateNameInput?.select();
+    }, 50);
+  }
+
+  function closeTemplateSaveModal({ restoreFocus = true } = {}) {
+    if (!templateSaveModal) {
+      return;
+    }
+    templateSaveModal.classList.add('hidden');
+    document.body.classList.remove('modal-open');
+    if (typeof releaseTemplateSaveFocusTrap === 'function') {
+      releaseTemplateSaveFocusTrap();
+      releaseTemplateSaveFocusTrap = null;
+    }
+    if (restoreFocus && lastFocusedBeforeTemplateSave) {
+      lastFocusedBeforeTemplateSave.focus({ preventScroll: true });
+    }
+    lastFocusedBeforeTemplateSave = null;
+  }
+
+  function openTemplateManageModal() {
+    if (!templateManageModal) {
+      return;
+    }
+    closeTemplateMenu();
+    renderTemplateManageList();
+    lastFocusedBeforeTemplateManage =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    templateManageModal.classList.remove('hidden');
+    document.body.classList.add('modal-open');
+    if (typeof releaseTemplateManageFocusTrap === 'function') {
+      releaseTemplateManageFocusTrap();
+    }
+    releaseTemplateManageFocusTrap = createFocusTrap(templateManageModal);
+    window.setTimeout(() => {
+      templateManageModal.querySelector('[data-template-action="load"]')?.focus({ preventScroll: true });
+    }, 50);
+  }
+
+  function closeTemplateManageModal({ restoreFocus = true } = {}) {
+    if (!templateManageModal) {
+      return;
+    }
+    templateManageModal.classList.add('hidden');
+    document.body.classList.remove('modal-open');
+    if (typeof releaseTemplateManageFocusTrap === 'function') {
+      releaseTemplateManageFocusTrap();
+      releaseTemplateManageFocusTrap = null;
+    }
+    if (restoreFocus && lastFocusedBeforeTemplateManage) {
+      lastFocusedBeforeTemplateManage.focus({ preventScroll: true });
+    }
+    lastFocusedBeforeTemplateManage = null;
+  }
+
+  function renderTemplateManageList() {
+    if (!templateManageList) {
+      return;
+    }
+    const templates = getAllTemplates();
+    templateManageList.innerHTML = '';
+    if (!templates.length) {
+      templateEmptyState?.classList.remove('hidden');
+      return;
+    }
+    templateEmptyState?.classList.add('hidden');
+
+    templates.forEach((template) => {
+      const card = document.createElement('article');
+      card.className = 'template-card';
+      card.dataset.templateId = template.id;
+      card.setAttribute('role', 'listitem');
+
+      const header = document.createElement('div');
+      header.className = 'template-card__header';
+      const name = document.createElement('h3');
+      name.className = 'template-card__name';
+      name.textContent = template.name;
+      header.appendChild(name);
+
+      if (template.isBuiltIn) {
+        const badge = document.createElement('span');
+        badge.className = 'template-badge';
+        badge.textContent = 'Built-in';
+        header.appendChild(badge);
+      }
+
+      card.appendChild(header);
+
+      const meta = document.createElement('div');
+      meta.className = 'template-card__meta';
+      const createdAt = document.createElement('span');
+      createdAt.textContent = `Updated ${formatDate(template.createdAt)}`;
+      meta.appendChild(createdAt);
+      card.appendChild(meta);
+
+      const preview = document.createElement('p');
+      preview.className = 'template-card__preview';
+      preview.textContent =
+        template.previewText?.trim() || stripHtmlToPreview(template.content, 120) || 'No preview text';
+      card.appendChild(preview);
+
+      const actions = document.createElement('div');
+      actions.className = 'template-card__actions';
+
+      const loadButton = document.createElement('button');
+      loadButton.type = 'button';
+      loadButton.className = 'btn secondary';
+      loadButton.dataset.templateAction = 'load';
+      loadButton.textContent = 'Load';
+      actions.appendChild(loadButton);
+
+      if (!template.isBuiltIn) {
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'btn ghost';
+        deleteButton.dataset.templateAction = 'delete';
+        deleteButton.textContent = 'Delete';
+        actions.appendChild(deleteButton);
+      }
+
+      card.appendChild(actions);
+      templateManageList.appendChild(card);
+    });
+  }
+
+  function requestTemplateLoad(template, options = {}) {
+    if (!template) {
+      return;
+    }
+    const { source = 'menu' } = options;
+    const hasExistingContent =
+      Boolean(titleInput?.value?.trim())
+      || Boolean(previewTextInput?.value?.trim())
+      || Boolean(editor?.innerText?.trim());
+
+    const apply = () => {
+      applyTemplate(template);
+    };
+
+    if (hasExistingContent) {
+      if (source === 'manage') {
+        closeTemplateManageModal({ restoreFocus: false });
+      }
+      showToast('Replace current content with template?', {
+        type: 'warning',
+        description: `Loading "${template.name}" will overwrite your current draft.`,
+        actions: [
+          {
+            label: 'Replace',
+            onClick: ({ dismiss }) => {
+              dismiss();
+              apply();
+            },
+          },
+          {
+            label: 'Cancel',
+            dismissOnClick: true,
+          },
+        ],
+      });
+    } else {
+      if (source === 'manage') {
+        closeTemplateManageModal({ restoreFocus: false });
+      }
+      apply();
+    }
+  }
+
+  function applyTemplate(template) {
+    if (!template) {
+      return;
+    }
+    closeTemplateMenu();
+    const templateTitle = (template.title || '').trim();
+    const templatePreview = (template.previewText || '').trim();
+    const templateContent = (template.content || '').trim();
+
+    if (titleInput) {
+      titleInput.value = templateTitle;
+      titleInput.dispatchEvent(new Event('input'));
+    }
+    if (previewTextInput) {
+      previewTextInput.value = templatePreview;
+      previewTextInput.dispatchEvent(new Event('input'));
+    }
+    if (editor) {
+      editor.innerHTML = templateContent;
+      editor.dispatchEvent(new Event('input'));
+    }
+    updatePreviewCounter();
+    updateBestPractices();
+    saveDraft({ announce: false });
+    showToast(`Template loaded: ${template.name}`, {
+      type: 'success',
+    });
+    setSendStatus(`Template "${template.name}" loaded into the editor.`);
+  }
+
+  function handleTemplateSave() {
+    if (!templateNameInput) {
+      return;
+    }
+    const name = templateNameInput.value.trim();
+    if (!name) {
+      showToast('Template name is required', {
+        type: 'error',
+        description: 'Add a descriptive name before saving.',
+      });
+      templateNameInput.focus({ preventScroll: true });
+      return;
+    }
+
+    const titleValue = titleInput?.value?.trim() || '';
+    const previewValue = previewTextInput?.value?.trim() || '';
+    const contentValue = editor?.innerHTML?.trim() || '';
+    if (!titleValue && !previewValue && !contentValue) {
+      showToast('No content to save', {
+        type: 'error',
+        description: 'Add a title, preview, or body content before saving a template.',
+      });
+      return;
+    }
+
+    const duplicate = customTemplates.find(
+      (template) => template.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (duplicate) {
+      showToast('Template name already exists', {
+        type: 'error',
+        description: 'Choose a different name to keep templates distinct.',
+      });
+      templateNameInput.focus({ preventScroll: true });
+      templateNameInput.select();
+      return;
+    }
+
+    const templateRecord = {
+      id: Date.now().toString(),
+      name,
+      title: titleInput?.value || '',
+      previewText: previewTextInput?.value || '',
+      content: editor?.innerHTML || '',
+      isBuiltIn: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    persistCustomTemplates([templateRecord, ...customTemplates]);
+    renderTemplateMenu();
+    if (!templateManageModal?.classList.contains('hidden')) {
+      renderTemplateManageList();
+    }
+    closeTemplateSaveModal({ restoreFocus: false });
+    showToast(`Template saved: ${name}`, {
+      type: 'success',
+    });
+  }
+
+  function deleteTemplateById(templateId) {
+    const template = customTemplates.find((item) => String(item.id) === String(templateId));
+    if (!template) {
+      return;
+    }
+    if (!window.confirm(`Delete template '${template.name}'?`)) {
+      return;
+    }
+    const nextTemplates = customTemplates.filter((item) => String(item.id) !== String(templateId));
+    persistCustomTemplates(nextTemplates);
+    renderTemplateMenu();
+    if (!templateManageModal?.classList.contains('hidden')) {
+      renderTemplateManageList();
+    }
+    showToast(`Template deleted: ${template.name}`, {
+      type: 'success',
+    });
+  }
+
+  customTemplates = loadCustomTemplatesFromStorage();
+  renderTemplateMenu();
+  templateMenuButton?.setAttribute('aria-expanded', 'false');
 
   function redirectToLogin() {
     const currentLocation = `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -782,8 +1369,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const sendConfirmOpen =
       sendConfirmModal && !sendConfirmModal.classList.contains('hidden');
     const previewOpen = previewModal && !previewModal.classList.contains('hidden');
+    const templateSaveOpen = templateSaveModal && !templateSaveModal.classList.contains('hidden');
+    const templateManageOpen = templateManageModal && !templateManageModal.classList.contains('hidden');
 
     if (key === 'Escape') {
+      if (templateSaveOpen) {
+        event.preventDefault();
+        closeTemplateSaveModal();
+        return;
+      }
+      if (templateManageOpen) {
+        event.preventDefault();
+        closeTemplateManageModal();
+        return;
+      }
       if (sendConfirmOpen) {
         event.preventDefault();
         hideSendConfirmModal();
@@ -792,6 +1391,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (previewOpen) {
         event.preventDefault();
         hidePreviewModal();
+        return;
+      }
+      if (templateMenuOpen) {
+        event.preventDefault();
+        closeTemplateMenu();
       }
       return;
     }
@@ -970,41 +1574,41 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function saveDraft(options = {}) {
-    const { announce = false } = options;
+    const { announce = false, showIndicator = false } = options;
+    const timestamp = new Date().toISOString();
     const draft = {
       title: titleInput.value,
       previewText: previewTextInput.value,
       content: editor.innerHTML,
-      updatedAt: new Date().toISOString(),
+      updatedAt: timestamp,
+      savedAt: timestamp,
     };
     try {
       localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
-      const statusOptions = announce
-        ? {
+      if (announce) {
+        setSendStatus('Draft saved locally.', false, {
             variant: 'success',
             toast: {
               title: 'Draft saved',
               type: 'success',
               description: 'Stored safely in this browser for you.',
             },
-          }
-        : {};
-      setSendStatus('Draft saved locally.', false, statusOptions);
+        });
+      } else if (showIndicator) {
+        showDraftSavedIndicator();
+      }
     } catch (error) {
       console.warn('Failed to save draft.', error);
-      const errorOptions = {
-        variant: 'error',
-        ...(announce
-          ? {
-            toast: {
-              title: 'Draft not saved',
-              type: 'error',
-              description: 'Check storage permissions and try again.',
-            },
-          }
-          : {}),
-      };
-      setSendStatus('Could not save draft locally.', true, errorOptions);
+      if (announce) {
+        setSendStatus('Could not save draft locally.', true, {
+          variant: 'error',
+          toast: {
+            title: 'Draft not saved',
+            type: 'error',
+            description: 'Check storage permissions and try again.',
+          },
+        });
+      }
     }
   }
 
@@ -1043,6 +1647,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
   sendConfirmBackdrop?.addEventListener('click', () => {
     hideSendConfirmModal();
+  });
+
+  templateMenuButton?.addEventListener('click', () => {
+    if (templateMenuOpen) {
+      closeTemplateMenu();
+    } else {
+      openTemplateMenu();
+    }
+  });
+
+  templateMenu?.addEventListener('click', handleTemplateMenuClick);
+  document.addEventListener('click', handleDocumentClickForTemplateMenu);
+
+  saveTemplateButton?.addEventListener('click', () => {
+    openTemplateSaveModal();
+  });
+
+  templateSaveClose?.addEventListener('click', () => closeTemplateSaveModal());
+  templateSaveCancel?.addEventListener('click', () => closeTemplateSaveModal());
+  templateSaveBackdrop?.addEventListener('click', () => closeTemplateSaveModal());
+  templateSaveConfirm?.addEventListener('click', () => handleTemplateSave());
+  templateNameInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleTemplateSave();
+    }
+  });
+
+  templateManageClose?.addEventListener('click', () => closeTemplateManageModal());
+  templateManageCloseFooter?.addEventListener('click', () => closeTemplateManageModal());
+  templateManageBackdrop?.addEventListener('click', () => closeTemplateManageModal());
+  templateManageList?.addEventListener('click', (event) => {
+    const actionButton = event.target.closest('button[data-template-action]');
+    if (!actionButton) {
+      return;
+    }
+    const container = actionButton.closest('[data-template-id]');
+    const templateId = container?.dataset.templateId;
+    if (!templateId) {
+      return;
+    }
+    const action = actionButton.dataset.templateAction;
+    if (action === 'load') {
+      const template = findTemplateById(templateId);
+      requestTemplateLoad(template, { source: 'manage' });
+    } else if (action === 'delete') {
+      deleteTemplateById(templateId);
+    }
   });
 
   async function executeSendNewsletter() {
@@ -2240,7 +2892,7 @@ function initializeChecklistToggle() {
 let autoSaveTimeout;
 const AUTOSAVE_INTERVAL = 30000;
 
-function saveDraft() {
+function persistDraft(auto = false) {
   const title = document.getElementById('newsletter-title')?.value || '';
   const previewText = document.getElementById('newsletter-preview-text')?.value || '';
   const content = document.getElementById('newsletter-content')?.innerHTML || '';
@@ -2249,19 +2901,7 @@ function saveDraft() {
     return;
   }
 
-  const draft = {
-    title,
-    previewText,
-    content,
-    savedAt: new Date().toISOString()
-  };
-
-  try {
-    localStorage.setItem('newsletter-draft', JSON.stringify(draft));
-    showDraftSavedIndicator();
-  } catch (e) {
-    console.error('Failed to save draft:', e);
-  }
+  saveDraft({ announce: false, showIndicator: auto });
 }
 
 function showDraftSavedIndicator() {
@@ -2291,74 +2931,6 @@ function showDraftSavedIndicator() {
     indicator.style.animation = 'slideOut 0.3s ease-out';
     setTimeout(() => indicator.remove(), 300);
   }, 2000);
-}
-
-function loadDraft() {
-  try {
-    const saved = localStorage.getItem('newsletter-draft');
-    if (!saved) return;
-
-    const draft = JSON.parse(saved);
-    if (!draft || (!draft.title && !draft.previewText && !draft.content)) {
-      return;
-    }
-
-    const savedDate = new Date(draft.savedAt || draft.updatedAt || Date.now());
-    const minutesAgo = Math.floor((Date.now() - savedDate.getTime()) / 60000);
-
-    let timeText;
-    if (minutesAgo < 1) {
-      timeText = 'just now';
-    } else if (minutesAgo === 1) {
-      timeText = '1 minute ago';
-    } else if (minutesAgo < 60) {
-      timeText = `${minutesAgo} minutes ago`;
-    } else {
-      const hoursAgo = Math.floor(minutesAgo / 60);
-      timeText = hoursAgo === 1 ? '1 hour ago' : `${hoursAgo} hours ago`;
-    }
-
-    const restore = () => {
-      const titleInput = document.getElementById('newsletter-title');
-      const previewInput = document.getElementById('newsletter-preview-text');
-      const contentEditor = document.getElementById('newsletter-content');
-
-      if (titleInput) {
-        titleInput.value = draft.title || '';
-        titleInput.dispatchEvent(new Event('input'));
-      }
-      if (previewInput) {
-        previewInput.value = draft.previewText || '';
-        previewInput.dispatchEvent(new Event('input'));
-      }
-      if (contentEditor) {
-        contentEditor.innerHTML = draft.content || '';
-        contentEditor.dispatchEvent(new Event('input'));
-      }
-
-      showToast('Draft restored', {
-        type: 'success',
-        description: 'You are editing the last auto-saved version.',
-      });
-    };
-
-    showToast('Unsaved draft found', {
-      type: 'warning',
-      description: `Saved ${timeText}.`,
-      actions: [
-        {
-          label: 'Restore draft',
-          onClick: restore,
-        },
-        {
-          label: 'Dismiss',
-          dismissOnClick: true,
-        },
-      ],
-    });
-  } catch (e) {
-    console.error('Failed to load draft:', e);
-  }
 }
 
 function clearDraft() {
@@ -2393,14 +2965,14 @@ function startAutoSave() {
 
   const debouncedSave = () => {
     clearTimeout(autoSaveTimeout);
-    autoSaveTimeout = setTimeout(saveDraft, 2000);
+    autoSaveTimeout = setTimeout(() => persistDraft(true), 2000);
   };
 
   if (titleInput) titleInput.addEventListener('input', debouncedSave);
   if (previewInput) previewInput.addEventListener('input', debouncedSave);
   if (contentEditor) contentEditor.addEventListener('input', debouncedSave);
 
-  setInterval(saveDraft, AUTOSAVE_INTERVAL);
+  setInterval(() => persistDraft(true), AUTOSAVE_INTERVAL);
 }
 
 // Send test email functionality

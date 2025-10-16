@@ -463,6 +463,97 @@ select:focus {
   gap: 16px;
 }
 
+.template-action-bar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-bottom: 1rem;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.template-dropdown {
+  position: relative;
+}
+
+.dropdown-caret {
+  margin-left: 6px;
+  font-size: 0.75rem;
+}
+
+.template-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 240px;
+  background: #ffffff;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  padding: 6px 0;
+  z-index: 1050;
+}
+
+.template-menu.hidden {
+  display: none;
+}
+
+.template-menu-section {
+  padding: 6px 12px 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #6366f1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.template-menu button {
+  width: 100%;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.9rem;
+  color: var(--color-secondary);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.template-menu button span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-menu button:hover,
+.template-menu button:focus-visible {
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--color-primary);
+}
+
+.template-menu .menu-note {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  padding-left: 12px;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.template-menu .menu-divider {
+  height: 1px;
+  margin: 6px 0;
+  background: rgba(148, 163, 184, 0.4);
+}
+
 .subscribers-header {
   align-items: center;
 }
@@ -696,6 +787,14 @@ select:focus {
   padding: 0;
 }
 
+.manage-modal-body,
+.save-modal-body {
+  padding: 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
 .confirm-modal-body {
   padding: 24px 28px;
   font-size: 1rem;
@@ -792,6 +891,18 @@ select:focus {
   color: var(--color-muted);
 }
 
+.modal-subtitle {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-muted);
+}
+
+.modal-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-muted);
+}
+
 .toast-actions {
   display: flex;
   gap: 8px;
@@ -830,6 +941,90 @@ select:focus {
 .toast-close:hover,
 .toast-close:focus-visible {
   background: rgba(15, 23, 42, 0.08);
+}
+
+.template-manage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.template-card {
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 12px;
+  padding: 16px;
+  background: #ffffff;
+  display: grid;
+  gap: 10px;
+}
+
+.template-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.template-card__name {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-secondary);
+}
+
+.template-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+}
+
+.template-card__preview {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-secondary);
+  line-height: 1.4;
+}
+
+.template-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.template-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.12);
+  color: #4f46e5;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.template-empty-state {
+  margin: 12px 0 0;
+  font-size: 0.9rem;
+  color: var(--color-muted);
+}
+
+.template-empty-state.hidden {
+  display: none;
+}
+
+.template-manage-list button.btn {
+  font-size: 0.85rem;
+  padding: 8px 12px;
+}
+
+.template-footnote {
+  font-size: 0.8rem;
+  color: var(--color-muted);
 }
 
 .toast--success {
@@ -1133,6 +1328,20 @@ select:focus {
   
   .best-practices-checklist {
     padding: 0.75rem;
+  }
+
+  .template-action-bar {
+    justify-content: flex-start;
+  }
+
+  .template-dropdown {
+    width: 100%;
+  }
+
+  .template-menu {
+    right: auto;
+    left: 0;
+    width: 100%;
   }
 }
 

@@ -89,6 +89,18 @@
             </div>
           </div>
 
+          <div class="template-action-bar">
+            <div class="template-dropdown">
+              <button id="template-menu-button" class="btn secondary icon-left" type="button" aria-haspopup="true"
+                aria-expanded="false">
+                <span class="icon" aria-hidden="true">📂</span>
+                <span>Load template</span>
+                <span class="dropdown-caret" aria-hidden="true">▾</span>
+              </button>
+              <div id="template-menu" class="template-menu hidden" role="menu" aria-label="Saved templates"></div>
+            </div>
+          </div>
+
           <!-- Title field with character counter -->
           <div class="field">
             <div class="field-label-row">
@@ -171,6 +183,10 @@
             <button id="save-draft-button" class="btn ghost icon-left" type="button">
               <span class="icon" aria-hidden="true">💾</span>
               <span>Save draft</span>
+            </button>
+            <button id="save-template-button" class="btn ghost icon-left" type="button">
+              <span class="icon" aria-hidden="true">📌</span>
+              <span>Save as template</span>
             </button>
             <button id="clear-draft-button" class="btn ghost icon-left" type="button">
               <span class="icon" aria-hidden="true">🗑️</span>
@@ -416,6 +432,55 @@
           <span class="icon" aria-hidden="true">📧</span>
           <span id="send-confirm-button-label">Send newsletter</span>
         </button>
+      </footer>
+    </div>
+  </div>
+
+  <div id="template-manage-modal" class="modal hidden" role="dialog" aria-modal="true"
+    aria-labelledby="template-manage-title" aria-describedby="template-manage-description">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-dialog">
+      <header class="modal-header">
+        <h2 id="template-manage-title">Template Library</h2>
+        <button id="template-manage-close" class="btn icon-only" type="button" aria-label="Close template manager">
+          ✕
+        </button>
+      </header>
+      <div class="modal-body manage-modal-body">
+        <p id="template-manage-description" class="modal-subtitle">
+          Load a saved layout or remove templates you no longer need.
+        </p>
+        <div id="template-manage-list" class="template-manage-list" role="list"></div>
+        <p id="template-empty-state" class="template-empty-state hidden">No saved templates yet. Save one from the
+          composer to reuse it later.</p>
+      </div>
+      <footer class="modal-footer">
+        <button id="template-manage-close-footer" class="btn ghost" type="button">Close</button>
+      </footer>
+    </div>
+  </div>
+
+  <div id="template-save-modal" class="modal hidden" role="dialog" aria-modal="true"
+    aria-labelledby="template-save-title">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-dialog">
+      <header class="modal-header">
+        <h2 id="template-save-title">Save as Template</h2>
+        <button id="template-save-close" class="btn icon-only" type="button" aria-label="Close save template dialog">
+          ✕
+        </button>
+      </header>
+      <div class="modal-body save-modal-body">
+        <label class="field">
+          <span class="field-label" for="template-name-input">Template name</span>
+          <input id="template-name-input" type="text" placeholder="e.g. Spring Product Launch" autocomplete="off"
+            maxlength="80" />
+        </label>
+        <p class="modal-hint">Templates save the current title, preview text, and content in your browser.</p>
+      </div>
+      <footer class="modal-footer">
+        <button id="template-save-cancel" class="btn ghost" type="button">Cancel</button>
+        <button id="template-save-confirm" class="btn primary" type="button">Save template</button>
       </footer>
     </div>
   </div>
