@@ -384,6 +384,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const templateNameInput = document.getElementById('template-name-input');
   const templateSaveBackdrop = templateSaveModal?.querySelector('[data-close-modal]');
   const composeLayout = document.getElementById('compose-layout');
+  const composeCard = composeLayout?.closest('.compose-card');
   const splitPreviewToggle = document.getElementById('split-preview-toggle');
   const inlinePreviewPane = document.getElementById('compose-preview-pane');
   const inlinePreviewFrame = document.getElementById('split-preview-frame');
@@ -588,6 +589,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const normalized = Boolean(enabled);
     if (composeLayout) {
       composeLayout.setAttribute('data-preview-mode', normalized ? 'split' : 'single');
+    }
+    if (composeCard) {
+      composeCard.classList.toggle('compose-card--split', normalized);
     }
     if (inlinePreviewPane) {
       inlinePreviewPane.setAttribute('aria-hidden', String(!normalized));
