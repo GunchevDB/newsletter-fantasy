@@ -14,6 +14,9 @@ const TOAST_ICONS = {
 };
 const MAX_IMAGE_UPLOAD_SIZE = 5 * 1024 * 1024;
 const TEMPLATE_STORAGE_KEY = 'newsletter-templates';
+const PREVIEW_PREFERENCES_STORAGE_KEY = 'compose-preview-preferences-v1';
+const PREVIEW_UPDATE_DEBOUNCE_MS = 500;
+const PREVIEW_DEVICE_OPTIONS = ['desktop', 'tablet', 'mobile'];
 const BUILT_IN_TEMPLATES = [
   {
     id: 'builtin-product-update',
@@ -83,6 +86,16 @@ const BUILT_IN_TEMPLATES = [
   },
 ];
 let toastCounter = 0;
+let previewPreferences = {
+  splitMode: false,
+  device: 'desktop',
+  showImages: true,
+};
+let previewUpdateTimeoutId = null;
+let lastPreviewHtml = '';
+let inlinePreviewPendingScroll = 0;
+let inlinePreviewRenderToken = 0;
+let previewStatusClearTimeoutId = null;
 
 function getToastContainer() {
   if (typeof document === 'undefined') {
@@ -215,6 +228,44 @@ function showToast(message, options = {}) {
   return { id: toastId, dismiss, element: toast };
 }
 
+function loadPreviewPreferencesFromStorage() {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(PREVIEW_PREFERENCES_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) {
+      return null;
+    }
+    return {
+      splitMode: Boolean(parsed.splitMode),
+      device: typeof parsed.device === 'string' ? parsed.device : 'desktop',
+      showImages: parsed.showImages !== false,
+    };
+  } catch (error) {
+    console.warn('Failed to load preview preferences', error);
+    return null;
+  }
+}
+
+function persistPreviewPreferencesToStorage(preferences) {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      PREVIEW_PREFERENCES_STORAGE_KEY,
+      JSON.stringify(preferences),
+    );
+  } catch (error) {
+    console.warn('Failed to persist preview preferences', error);
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const DOMPURIFY_CONFIG = {
     USE_PROFILES: { html: true },
@@ -332,6 +383,42 @@ document.addEventListener('DOMContentLoaded', () => {
   const templateSaveConfirm = document.getElementById('template-save-confirm');
   const templateNameInput = document.getElementById('template-name-input');
   const templateSaveBackdrop = templateSaveModal?.querySelector('[data-close-modal]');
+  const composeLayout = document.getElementById('compose-layout');
+  const splitPreviewToggle = document.getElementById('split-preview-toggle');
+  const inlinePreviewPane = document.getElementById('compose-preview-pane');
+  const inlinePreviewFrame = document.getElementById('split-preview-frame');
+  const inlinePreviewDeviceFrame = inlinePreviewPane?.querySelector('.preview-device-frame');
+  const previewLoadingIndicator = document.getElementById('preview-loading');
+  const previewErrorMessage = document.getElementById('preview-error');
+  const previewMetaCounts = document.getElementById('preview-meta-counts');
+  const previewRenderTime = document.getElementById('preview-render-time');
+  const previewStatusMessage = document.getElementById('preview-status-message');
+  const previewImagesCheckbox = document.getElementById('preview-images-checkbox');
+  const previewRefreshButton = document.getElementById('preview-refresh-button');
+  const previewCopyButton = document.getElementById('preview-copy-button');
+  const deviceToggleButtons = inlinePreviewPane
+    ? Array.from(inlinePreviewPane.querySelectorAll('.device-toggle-button'))
+    : [];
+
+  const storedPreviewPreferences = loadPreviewPreferencesFromStorage();
+  if (storedPreviewPreferences) {
+    const preferredDevice = PREVIEW_DEVICE_OPTIONS.includes(storedPreviewPreferences.device)
+      ? storedPreviewPreferences.device
+      : 'desktop';
+    previewPreferences = {
+      splitMode: Boolean(storedPreviewPreferences.splitMode),
+      device: preferredDevice,
+      showImages: storedPreviewPreferences.showImages !== false,
+    };
+  }
+
+  applySplitMode(previewPreferences.splitMode, {
+    skipPersist: true,
+    suppressRender: true,
+    suppressMessage: true,
+  });
+  applyDeviceSelection(previewPreferences.device, { skipPersist: true, suppressRender: true });
+  applyShowImagesPreference(previewPreferences.showImages, { skipPersist: true, suppressRender: true });
 
   // Subscriber references ------------------------------------------------------
   const subscriberRowTemplate = document.getElementById('subscriber-row-template');
@@ -441,6 +528,264 @@ document.addEventListener('DOMContentLoaded', () => {
     element.textContent = message;
     element.classList.toggle('is-error', isError);
   }
+
+  function shouldRenderInlinePreview() {
+    return composeLayout?.dataset.previewMode === 'split';
+  }
+
+  function updatePreviewStatus(message, variant = 'info') {
+    if (!previewStatusMessage) {
+      return;
+    }
+    previewStatusMessage.textContent = message || '';
+    previewStatusMessage.classList.remove('is-error', 'is-success');
+    if (previewStatusClearTimeoutId) {
+      window.clearTimeout(previewStatusClearTimeoutId);
+      previewStatusClearTimeoutId = null;
+    }
+    if (!message) {
+      return;
+    }
+    if (variant === 'error') {
+      previewStatusMessage.classList.add('is-error');
+    } else if (variant === 'success') {
+      previewStatusMessage.classList.add('is-success');
+    }
+    previewStatusClearTimeoutId = window.setTimeout(() => {
+      if (previewStatusMessage) {
+        previewStatusMessage.textContent = '';
+        previewStatusMessage.classList.remove('is-error', 'is-success');
+      }
+    }, 4000);
+  }
+
+  function showPreviewError(message) {
+    if (!previewErrorMessage) {
+      return;
+    }
+    if (!message) {
+      previewErrorMessage.classList.add('hidden');
+      previewErrorMessage.textContent = '';
+      return;
+    }
+    previewErrorMessage.textContent = message;
+    previewErrorMessage.classList.remove('hidden');
+  }
+
+  function showPreviewLoading() {
+    if (previewLoadingIndicator) {
+      previewLoadingIndicator.classList.remove('hidden');
+    }
+  }
+
+  function hidePreviewLoading() {
+    if (previewLoadingIndicator) {
+      previewLoadingIndicator.classList.add('hidden');
+    }
+  }
+
+  function applySplitMode(enabled, options = {}) {
+    const normalized = Boolean(enabled);
+    if (composeLayout) {
+      composeLayout.setAttribute('data-preview-mode', normalized ? 'split' : 'single');
+    }
+    if (inlinePreviewPane) {
+      inlinePreviewPane.setAttribute('aria-hidden', String(!normalized));
+    }
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.classList.toggle('split-preview-active', normalized);
+    }
+    if (splitPreviewToggle) {
+      splitPreviewToggle.setAttribute('aria-pressed', String(normalized));
+      splitPreviewToggle.classList.toggle('is-active', normalized);
+    }
+    previewPreferences.splitMode = normalized;
+    if (!options.skipPersist) {
+      persistPreviewPreferencesToStorage(previewPreferences);
+    }
+    if (normalized && !options.suppressRender) {
+      scheduleInlinePreviewUpdate({
+        immediate: true,
+        reason: 'split-toggle',
+        forceRender: true,
+      });
+      if (!options.suppressMessage) {
+        updatePreviewStatus('Split preview enabled', 'success');
+      }
+    } else if (!normalized) {
+      hidePreviewLoading();
+      showPreviewError('');
+      if (!options.suppressMessage) {
+        updatePreviewStatus('Split preview disabled');
+      }
+    }
+  }
+
+  function applyDeviceSelection(device, options = {}) {
+    const normalized = PREVIEW_DEVICE_OPTIONS.includes(device) ? device : 'desktop';
+    previewPreferences.device = normalized;
+    if (inlinePreviewDeviceFrame) {
+      inlinePreviewDeviceFrame.setAttribute('data-device', normalized);
+    }
+    deviceToggleButtons.forEach((button) => {
+      const isActive = button.dataset.device === normalized;
+      button.classList.toggle('is-active', isActive);
+      button.setAttribute('aria-pressed', String(isActive));
+    });
+    if (!options.skipPersist) {
+      persistPreviewPreferencesToStorage(previewPreferences);
+    }
+    if (!options.suppressRender) {
+      if (shouldRenderInlinePreview()) {
+        const label = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+        updatePreviewStatus(`${label} preview width`, 'info');
+      }
+      scheduleInlinePreviewUpdate({
+        immediate: true,
+        reason: 'device-change',
+        forceRender: true,
+      });
+    }
+  }
+
+  function applyShowImagesPreference(showImages, options = {}) {
+    const normalized = showImages !== false;
+    previewPreferences.showImages = normalized;
+    if (previewImagesCheckbox) {
+      previewImagesCheckbox.checked = normalized;
+    }
+    if (!options.skipPersist) {
+      persistPreviewPreferencesToStorage(previewPreferences);
+    }
+    if (!options.suppressRender) {
+      if (shouldRenderInlinePreview()) {
+        updatePreviewStatus(
+          normalized ? 'Images visible in preview' : 'Images hidden in preview',
+          normalized ? 'success' : 'info',
+        );
+      }
+      scheduleInlinePreviewUpdate({
+        immediate: true,
+        reason: 'image-visibility-toggle',
+        forceRender: true,
+      });
+    }
+  }
+
+  function updatePreviewMetricsDisplay() {
+    if (!previewMetaCounts || !editor) {
+      return;
+    }
+    const rawText = editor.innerText || '';
+    const normalized = rawText.replace(/\s+/g, ' ').trim();
+    const charCount = normalized.length;
+    const words = normalized ? normalized.split(' ').filter((word) => word.length > 0) : [];
+    const wordCount = words.length;
+    const wordLabel = wordCount === 1 ? 'word' : 'words';
+    previewMetaCounts.textContent = `${charCount} chars · ${wordCount} ${wordLabel}`;
+  }
+
+  function convertContentImagesToPlaceholders(html) {
+    if (!html) {
+      return html;
+    }
+    if (typeof DOMParser === 'function') {
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
+        const container = doc.body;
+        container.querySelectorAll('img').forEach((img) => {
+          const placeholder = doc.createElement('div');
+          placeholder.className = 'preview-image-placeholder';
+          const alt = (img.getAttribute('alt') || '').trim();
+          placeholder.textContent = alt ? `[Image: ${alt}]` : '[Image]';
+          img.replaceWith(placeholder);
+        });
+        return container.innerHTML;
+      } catch (error) {
+        console.warn('Failed to parse content for image placeholders', error);
+      }
+    }
+    return html
+      .replace(
+        /<img\b[^>]*alt="([^"]*)"[^>]*>/gi,
+        (_, alt) => `<div class="preview-image-placeholder">[Image: ${alt.trim()}]</div>`,
+      )
+      .replace(
+        /<img\b[^>]*>/gi,
+        '<div class="preview-image-placeholder">[Image]</div>',
+      );
+  }
+
+  function scheduleInlinePreviewUpdate(options = {}) {
+    const {
+      immediate = false,
+      reason = 'auto',
+      forceRender = false,
+    } = options;
+    if (immediate) {
+      window.clearTimeout(previewUpdateTimeoutId);
+      renderPreview({
+        showModal: false,
+        reason,
+        forceRenderInline: forceRender,
+      });
+      return;
+    }
+    window.clearTimeout(previewUpdateTimeoutId);
+    previewUpdateTimeoutId = window.setTimeout(() => {
+      renderPreview({
+        showModal: false,
+        reason,
+        forceRenderInline: forceRender,
+      });
+    }, PREVIEW_UPDATE_DEBOUNCE_MS);
+  }
+
+  function updateInlinePreview(html, options = {}) {
+    if (!inlinePreviewFrame || typeof html !== 'string') {
+      if (typeof html === 'string') {
+        lastPreviewHtml = html;
+      }
+      return;
+    }
+    lastPreviewHtml = html;
+    const shouldForce = Boolean(options.force);
+    if (!shouldForce && !shouldRenderInlinePreview()) {
+      return;
+    }
+    try {
+      const frameWindow = inlinePreviewFrame.contentWindow;
+      inlinePreviewPendingScroll =
+        frameWindow?.scrollY
+        ?? frameWindow?.document?.documentElement?.scrollTop
+        ?? frameWindow?.document?.body?.scrollTop
+        ?? 0;
+    } catch (error) {
+      inlinePreviewPendingScroll = 0;
+    }
+    showPreviewLoading();
+    inlinePreviewRenderToken += 1;
+    inlinePreviewFrame.dataset.renderToken = String(inlinePreviewRenderToken);
+    inlinePreviewFrame.srcdoc = html;
+  }
+
+  inlinePreviewFrame?.addEventListener('load', () => {
+    const { renderToken } = inlinePreviewFrame.dataset;
+    if (!renderToken || Number(renderToken) !== inlinePreviewRenderToken) {
+      return;
+    }
+    hidePreviewLoading();
+    try {
+      inlinePreviewFrame.contentWindow?.scrollTo(0, inlinePreviewPendingScroll || 0);
+    } catch (error) {
+      // Ignore scroll restoration errors.
+    }
+    if (shouldRenderInlinePreview()) {
+      updatePreviewStatus('Preview updated', 'success');
+    }
+    updatePreviewMetricsDisplay();
+  });
 
   function setSubscriberStatus(message, isError = false, options = {}) {
     if (!subscriberStatus) {
@@ -1115,6 +1460,17 @@ document.addEventListener('DOMContentLoaded', () => {
               height: auto;
               border-radius: 8px;
             }
+            .content .preview-image-placeholder {
+              display: block;
+              padding: 16px;
+              margin: 16px 0;
+              border-radius: 8px;
+              background: #f1f5f9;
+              border: 1px dashed rgba(148, 163, 184, 0.7);
+              color: #475569;
+              font-style: italic;
+              text-align: center;
+            }
             .footer {
               background: #f9fafb;
               padding: 24px 32px 32px 32px;
@@ -1199,14 +1555,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Compose interactions -------------------------------------------------------
-  if (previewTextInput) {
-    previewTextInput.addEventListener('input', () => {
-      if (previewTextInput.value.length > PREVIEW_MAX_LENGTH) {
-        previewTextInput.value = previewTextInput.value.slice(0, PREVIEW_MAX_LENGTH);
-      }
-      updatePreviewCounter();
+  if (editor) {
+    editor.addEventListener('input', () => {
+      scheduleInlinePreviewUpdate({ reason: 'auto' });
     });
-    updatePreviewCounter();
   }
 
   toolbarButtons.forEach((button) => {
@@ -1312,40 +1664,219 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function renderPreview(showModal = true) {
-    const title = titleInput.value.trim();
-    const rawContent = editor.innerHTML.trim();
-    const content = sanitizeEditorHtml(rawContent);
-    const previewText = previewTextInput.value.trim();
+  if (splitPreviewToggle) {
+    splitPreviewToggle.addEventListener('click', () => {
+      applySplitMode(!previewPreferences.splitMode);
+    });
+  }
 
-    if (!title || !content) {
-      setSendStatus('Preview unavailable. Add a title and content first.', true, {
-        toast: {
-          title: 'Preview needs content',
-          type: 'error',
-          description: 'Add a subject and body before opening the preview.',
-        },
+  deviceToggleButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const device = button.dataset.device || 'desktop';
+      applyDeviceSelection(device);
+    });
+  });
+
+  if (previewImagesCheckbox) {
+    previewImagesCheckbox.addEventListener('change', (event) => {
+      applyShowImagesPreference(event.target.checked);
+    });
+  }
+
+  if (previewRefreshButton) {
+    previewRefreshButton.addEventListener('click', () => {
+      updatePreviewStatus('Refreshing preview…');
+      scheduleInlinePreviewUpdate({
+        immediate: true,
+        reason: 'manual-refresh',
+        forceRender: true,
       });
+    });
+  }
+
+  if (previewCopyButton) {
+    previewCopyButton.addEventListener('click', async () => {
+      if (!lastPreviewHtml) {
+        const success = renderPreview({
+          showModal: false,
+          reason: 'copy-html',
+          forceRenderInline: false,
+        });
+        if (!success) {
+          updatePreviewStatus('Nothing to copy yet.', 'error');
+          return;
+        }
+      }
+      try {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(lastPreviewHtml);
+        } else {
+          const fallbackArea = document.createElement('textarea');
+          fallbackArea.value = lastPreviewHtml;
+          fallbackArea.setAttribute('readonly', '');
+          fallbackArea.style.position = 'absolute';
+          fallbackArea.style.left = '-9999px';
+          document.body.appendChild(fallbackArea);
+          fallbackArea.select();
+          document.execCommand('copy');
+        document.body.removeChild(fallbackArea);
+      }
+      updatePreviewStatus('HTML copied to clipboard', 'success');
+      showToast('Preview HTML copied', {
+        type: 'success',
+        duration: 2800,
+        description: 'The rendered email markup is ready to paste.',
+      });
+    } catch (error) {
+      console.error('Copy preview HTML failed', error);
+      updatePreviewStatus('Unable to copy HTML', 'error');
+      showToast('Copy failed', {
+        type: 'error',
+          description: 'Your browser blocked clipboard access.',
+        });
+      }
+    });
+  }
+
+  if (previewPreferences.splitMode) {
+    scheduleInlinePreviewUpdate({
+      immediate: true,
+      reason: 'initial-load',
+      forceRender: true,
+    });
+  }
+
+  updatePreviewMetricsDisplay();
+
+  function renderPreview(arg = {}) {
+    const defaultOptions = {
+      showModal: false,
+      reason: 'manual',
+      forceRenderInline: false,
+      manual: false,
+    };
+    const options = typeof arg === 'boolean'
+      ? { ...defaultOptions, showModal: arg, reason: 'manual', manual: true }
+      : { ...defaultOptions, ...arg };
+    const {
+      showModal,
+      reason,
+      forceRenderInline,
+      manual,
+    } = options;
+
+    updatePreviewMetricsDisplay();
+    const titleValue = (titleInput?.value || '').trim();
+    const rawContent = (editor?.innerHTML || '').trim();
+    const previewText = (previewTextInput?.value || '').trim();
+    const sanitizedContent = sanitizeEditorHtml(rawContent);
+    const strippedContent = sanitizedContent
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const hasMedia = /<(?:img|video|iframe)\b/i.test(sanitizedContent);
+    const hasTitle = titleValue.length > 0;
+    const hasBody = strippedContent.length > 0 || hasMedia;
+    const shouldNotifyUser = manual || showModal || ['modal', 'manual-refresh'].includes(reason);
+    const inlineVisible = shouldRenderInlinePreview();
+    const willRenderInline = inlineVisible || Boolean(forceRenderInline);
+
+    if (!hasTitle || !hasBody) {
+      if (willRenderInline) {
+        hidePreviewLoading();
+      }
+      if (inlineVisible) {
+        showPreviewError('Add a title and content to see the preview.');
+        updatePreviewStatus('Waiting for title and content…', 'error');
+      }
+      if (previewRenderTime) {
+        previewRenderTime.textContent = '— ms';
+      }
+      if (shouldNotifyUser) {
+        setSendStatus('Preview unavailable. Add a title and content first.', true, {
+          toast: {
+            title: 'Preview needs content',
+            type: 'error',
+            description: 'Add a subject and body before opening the preview.',
+          },
+        });
+      }
       return false;
     }
 
-    if (previewFrame) {
-      previewFrame.srcdoc = buildEmailTemplate(title, content, previewText);
+    if (inlineVisible) {
+      showPreviewError('');
+      updatePreviewStatus('Rendering preview…');
     }
+
+    const contentForPreview = previewPreferences.showImages
+      ? sanitizedContent
+      : convertContentImagesToPlaceholders(sanitizedContent);
+
+    const startTime = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+    let previewHtml = '';
+    try {
+      previewHtml = buildEmailTemplate(titleValue, contentForPreview, previewText);
+    } catch (error) {
+      console.error('Preview rendering failed', error);
+      if (willRenderInline) {
+        hidePreviewLoading();
+      }
+      showPreviewError('Preview failed to render. Try refreshing.');
+      if (inlineVisible) {
+        updatePreviewStatus('Preview failed to render', 'error');
+      }
+      if (previewRenderTime) {
+        previewRenderTime.textContent = '— ms';
+      }
+      if (shouldNotifyUser) {
+        showToast('Preview failed to render', {
+          type: 'error',
+          description: 'Try refreshing the preview or check your content.',
+        });
+      }
+      return false;
+    }
+    const endTime = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+    const elapsed = Math.max(0, Math.round(endTime - startTime));
+
+    if (previewRenderTime) {
+      previewRenderTime.textContent = `${elapsed} ms`;
+    }
+
+    lastPreviewHtml = previewHtml;
+    updateInlinePreview(previewHtml, { force: forceRenderInline });
+
+    if (previewFrame) {
+      previewFrame.srcdoc = previewHtml;
+    }
+
     if (showModal) {
       showPreviewModal();
     }
+
     return true;
   }
 
   function handlePreviewRequest() {
     if (!previewButton) {
-      renderPreview(true);
+      renderPreview({
+        showModal: true,
+        reason: 'modal',
+        manual: true,
+        forceRenderInline: true,
+      });
       return;
     }
     setButtonLoading(previewButton, true, 'Opening preview');
     try {
-      renderPreview(true);
+      renderPreview({
+        showModal: true,
+        reason: 'modal',
+        manual: true,
+        forceRenderInline: true,
+      });
     } finally {
       setButtonLoading(previewButton, false);
     }
@@ -1401,6 +1932,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (!modifierPressed || event.altKey) {
+      return;
+    }
+
+    if (key.toLowerCase() === 'p' && event.shiftKey) {
+      event.preventDefault();
+      applySplitMode(!previewPreferences.splitMode);
       return;
     }
 
@@ -2708,6 +3245,7 @@ function initializeCharacterCounters() {
       }
 
       updateBestPractices();
+      scheduleInlinePreviewUpdate({ reason: 'auto' });
     });
 
     if (titleInput.value) {
@@ -2729,6 +3267,7 @@ function initializeCharacterCounters() {
       }
 
       updateBestPractices();
+      scheduleInlinePreviewUpdate({ reason: 'auto' });
     });
 
     if (previewInput.value) {
@@ -2761,6 +3300,7 @@ function initializeWordCount() {
     }
 
     updateBestPractices();
+    updatePreviewMetricsDisplay();
   }
 
   contentEditor.addEventListener('input', updateWordCount);

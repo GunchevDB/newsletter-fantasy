@@ -56,11 +56,20 @@
             <h2>Compose Newsletter</h2>
             <p>Plan your subject line, teaser, and full content in one focused workspace.</p>
           </div>
+          <div class="card-header-actions">
+            <button id="split-preview-toggle" class="btn ghost icon-left" type="button" aria-pressed="false"
+              title="Toggle live split-screen preview (Ctrl+Shift+P)">
+              <span class="icon" aria-hidden="true">🪟</span>
+              <span>Split screen preview</span>
+            </button>
+          </div>
         </header>
         <div class="card-body">
+          <div id="compose-layout" class="compose-layout" data-preview-mode="single">
+            <div class="compose-editor-pane">
 
-          <!-- Best Practices Checklist -->
-          <div class="best-practices-checklist">
+              <!-- Best Practices Checklist -->
+              <div class="best-practices-checklist">
             <div class="checklist-header">
               <h3>✓ Best Practices</h3>
               <button id="toggle-checklist" class="btn-text" type="button">Hide</button>
@@ -166,7 +175,71 @@
             <p id="image-upload-status" class="status-inline" role="status" aria-live="polite"></p>
           </div>
         </div>
-        <footer class="card-footer compose-actions">
+        <aside id="compose-preview-pane" class="compose-preview-pane" aria-live="polite" aria-label="Live preview">
+          <div class="preview-pane-header">
+            <div class="preview-pane-title-row">
+              <h3>Live Preview</h3>
+              <div class="preview-pane-actions">
+                <button id="preview-refresh-button" class="btn ghost icon-left" type="button"
+                  title="Manually refresh preview">
+                  <span class="icon" aria-hidden="true">🔄</span>
+                  <span>Refresh preview</span>
+                </button>
+                <button id="preview-copy-button" class="btn ghost icon-left" type="button"
+                  title="Copy the rendered HTML to clipboard">
+                  <span class="icon" aria-hidden="true">📋</span>
+                  <span>Copy HTML</span>
+                </button>
+              </div>
+            </div>
+            <div class="preview-pane-toolbar">
+              <div class="device-toggle" role="group" aria-label="Preview device size">
+                <button class="device-toggle-button is-active" type="button" data-device="desktop" aria-pressed="true"
+                  title="Desktop width preview">
+                  <span aria-hidden="true">🖥️</span>
+                  <span>Desktop</span>
+                </button>
+                <button class="device-toggle-button" type="button" data-device="tablet" aria-pressed="false"
+                  title="Tablet width preview">
+                  <span aria-hidden="true">📱</span>
+                  <span>Tablet</span>
+                </button>
+                <button class="device-toggle-button" type="button" data-device="mobile" aria-pressed="false"
+                  title="Mobile width preview">
+                  <span aria-hidden="true">📲</span>
+                  <span>Mobile</span>
+                </button>
+              </div>
+              <label class="preview-images-toggle" title="Toggle image visibility inside the preview">
+                <input id="preview-images-checkbox" type="checkbox" checked />
+                <span>Show images</span>
+              </label>
+            </div>
+            <div class="preview-pane-meta">
+              <span id="preview-meta-counts" class="preview-meta-chip" title="Characters and words in current draft">
+                0 chars · 0 words
+              </span>
+              <span id="preview-render-time" class="preview-meta-chip" title="Most recent render time">
+                — ms
+              </span>
+              <span id="preview-status-message" class="preview-status-message" role="status" aria-live="polite"></span>
+            </div>
+          </div>
+          <div class="preview-pane-body">
+            <div class="preview-loading hidden" id="preview-loading" role="status" aria-live="polite">
+              <span class="spinner" aria-hidden="true"></span>
+              <span>Updating preview…</span>
+            </div>
+            <div class="preview-error hidden" id="preview-error" role="alert"></div>
+            <div class="preview-device-frame" data-device="desktop">
+              <iframe id="split-preview-frame" class="preview-iframe" title="Split screen email preview"
+                sandbox="allow-same-origin"></iframe>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+      <footer class="card-footer compose-actions">
           <div class="action-buttons">
             <button id="preview-button" class="btn secondary icon-left" type="button">
               <span class="icon" aria-hidden="true">👁️</span>
