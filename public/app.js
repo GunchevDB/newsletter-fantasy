@@ -12,6 +12,7 @@ const TOAST_ICONS = {
   warning: '⚠️',
   info: 'ℹ️',
 };
+const MAX_IMAGE_UPLOAD_SIZE = 5 * 1024 * 1024;
 let toastCounter = 0;
 
 function getToastContainer() {
@@ -53,6 +54,7 @@ function showToast(message, options = {}) {
     type = 'info',
     description = '',
     duration = TOAST_DEFAULT_DURATION,
+    actions = [],
   } = options;
 
   const normalizedType = TOAST_TYPES.has(type) ? type : 'info';
@@ -84,6 +86,41 @@ function showToast(message, options = {}) {
 
   toast.appendChild(content);
 
+  let dismissalTimeout = null;
+  const dismiss = () => {
+    window.clearTimeout(dismissalTimeout);
+    removeToastElement(toast);
+  };
+
+  if (Array.isArray(actions) && actions.length > 0) {
+    const actionsContainer = document.createElement('div');
+    actionsContainer.className = 'toast-actions';
+    actions.forEach((action) => {
+      if (!action || typeof action.label !== 'string') {
+        return;
+      }
+      const actionButton = document.createElement('button');
+      actionButton.type = 'button';
+      actionButton.className = 'toast-action';
+      actionButton.textContent = action.label;
+      actionButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof action.onClick === 'function') {
+          action.onClick({
+            dismiss,
+            toastElement: toast,
+          });
+        }
+        if (action.dismissOnClick !== false) {
+          dismiss();
+        }
+      });
+      actionsContainer.appendChild(actionButton);
+    });
+    toast.appendChild(actionsContainer);
+  }
+
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
   closeButton.className = 'toast-close';
@@ -92,13 +129,6 @@ function showToast(message, options = {}) {
   toast.appendChild(closeButton);
 
   container.appendChild(toast);
-
-  let dismissalTimeout = null;
-
-  const dismiss = () => {
-    window.clearTimeout(dismissalTimeout);
-    removeToastElement(toast);
-  };
 
   closeButton.addEventListener('click', dismiss);
   toast.addEventListener('mouseenter', () => window.clearTimeout(dismissalTimeout));
@@ -113,7 +143,7 @@ function showToast(message, options = {}) {
     dismissalTimeout = window.setTimeout(dismiss, duration);
   }
 
-  return { id: toastId, dismiss };
+  return { id: toastId, dismiss, element: toast };
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -206,9 +236,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const previewClose = document.getElementById('preview-close');
   const previewFrame = document.getElementById('email-preview');
   const sendButton = document.getElementById('send-button');
+  const sendButtonLabel = document.getElementById('send-button-label');
   const saveDraftButton = document.getElementById('save-draft-button');
   const sendStatus = document.getElementById('send-status');
   const modalBackdrop = previewModal?.querySelector('[data-close-modal]');
+  const sendConfirmModal = document.getElementById('send-confirm-modal');
+  const sendConfirmClose = document.getElementById('send-confirm-close');
+  const sendConfirmCancel = document.getElementById('send-confirm-cancel');
+  const sendConfirmButton = document.getElementById('send-confirm-button');
+  const sendConfirmButtonLabel = document.getElementById('send-confirm-button-label');
+  const sendConfirmMessage = document.getElementById('send-confirm-message');
+  const sendConfirmCount = document.getElementById('send-confirm-count');
+  const sendConfirmBackdrop = sendConfirmModal?.querySelector('[data-close-modal]');
 
   // Subscriber references ------------------------------------------------------
   const subscriberRowTemplate = document.getElementById('subscriber-row-template');
@@ -249,8 +288,12 @@ document.addEventListener('DOMContentLoaded', () => {
   let subscribersLoadedOnce = false;
   let analyticsLoadedOnce = false;
   let analyticsChart = null; // Holds the Chart.js instance so we can update or destroy between refreshes.
+  let subscriberTotal = 0;
   let releasePreviewFocusTrap = null;
-  let previouslyFocusedElement = null;
+  let releaseSendConfirmFocusTrap = null;
+  let lastFocusedBeforePreview = null;
+  let lastFocusedBeforeSendConfirm = null;
+  let isSendingNewsletter = false;
 
   if (toggleAddSubscriberButton) {
     toggleAddSubscriberButton.dataset.defaultContent = toggleAddSubscriberButton.innerHTML;
@@ -532,7 +575,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!previewModal) {
       return;
     }
-    previouslyFocusedElement =
+    lastFocusedBeforePreview =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     previewModal.classList.remove('hidden');
     document.body.classList.add('modal-open');
@@ -561,11 +604,11 @@ document.addEventListener('DOMContentLoaded', () => {
       releasePreviewFocusTrap = null;
     }
     const fallbackTarget =
-      previouslyFocusedElement && document.body.contains(previouslyFocusedElement)
-        ? previouslyFocusedElement
+      lastFocusedBeforePreview && document.body.contains(lastFocusedBeforePreview)
+        ? lastFocusedBeforePreview
         : previewButton;
     fallbackTarget?.focus({ preventScroll: true });
-    previouslyFocusedElement = null;
+    lastFocusedBeforePreview = null;
   }
 
   // Compose interactions -------------------------------------------------------
@@ -609,7 +652,23 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (!file.type.startsWith('image/')) {
-        setInlineStatus(imageUploadStatus, 'Please select an image file.', true);
+        const message = 'Image upload failed: please choose an image file.';
+        setInlineStatus(imageUploadStatus, message, true);
+        showToast('Image upload failed', {
+          type: 'error',
+          description: message,
+        });
+        uploadInput.value = '';
+        return;
+      }
+
+      if (file.size > MAX_IMAGE_UPLOAD_SIZE) {
+        const message = 'Image upload failed: file too large (max 5 MB).';
+        setInlineStatus(imageUploadStatus, message, true);
+        showToast('Image upload failed', {
+          type: 'error',
+          description: 'Select an image smaller than 5 MB and try again.',
+        });
         uploadInput.value = '';
         return;
       }
@@ -630,13 +689,15 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
+        const result = await response.json().catch(() => null);
         if (!response.ok) {
-          throw new Error('Upload failed.');
+          const errorMessage =
+            result?.error || result?.message || 'Image upload failed. Please try again.';
+          throw new Error(errorMessage);
         }
 
-        const result = await response.json();
         if (!result?.imageUrl) {
-          throw new Error('Upload failed.');
+          throw new Error('Image upload failed. Missing image URL in response.');
         }
 
         document.execCommand(
@@ -645,9 +706,18 @@ document.addEventListener('DOMContentLoaded', () => {
           `<img src="${result.imageUrl}" alt="Newsletter image" />`,
         );
         setInlineStatus(imageUploadStatus, 'Image added to the editor.');
+        showToast('Image uploaded', {
+          type: 'success',
+          description: 'Your image has been inserted into the draft.',
+        });
       } catch (error) {
         console.error(error);
-        setInlineStatus(imageUploadStatus, 'Could not upload image.', true);
+        const fallback = error?.message || 'Image upload failed. Please try again.';
+        setInlineStatus(imageUploadStatus, fallback, true);
+        showToast('Image upload failed', {
+          type: 'error',
+          description: fallback,
+        });
       } finally {
         setButtonLoading(uploadTrigger, false);
         uploadInput.value = '';
@@ -662,7 +732,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const previewText = previewTextInput.value.trim();
 
     if (!title || !content) {
-      setSendStatus('Title and content are required for preview.', true);
+      setSendStatus('Preview unavailable. Add a title and content first.', true, {
+        toast: {
+          title: 'Preview needs content',
+          type: 'error',
+          description: 'Add a subject and body before opening the preview.',
+        },
+      });
       return false;
     }
 
@@ -675,18 +751,155 @@ document.addEventListener('DOMContentLoaded', () => {
     return true;
   }
 
-  previewButton?.addEventListener('click', () => {
-    renderPreview(true);
-  });
+  function handlePreviewRequest() {
+    if (!previewButton) {
+      renderPreview(true);
+      return;
+    }
+    setButtonLoading(previewButton, true, 'Opening preview');
+    try {
+      renderPreview(true);
+    } finally {
+      setButtonLoading(previewButton, false);
+    }
+  }
+
+  if (previewButton) {
+    previewButton.addEventListener('click', () => {
+      handlePreviewRequest();
+    });
+  }
 
   previewClose?.addEventListener('click', hidePreviewModal);
   modalBackdrop?.addEventListener('click', hidePreviewModal);
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && previewModal && !previewModal.classList.contains('hidden')) {
-      hidePreviewModal();
+    if (event.defaultPrevented) {
+      return;
+    }
+    const key = event.key;
+    const modifierPressed = event.ctrlKey || event.metaKey;
+    const sendConfirmOpen =
+      sendConfirmModal && !sendConfirmModal.classList.contains('hidden');
+    const previewOpen = previewModal && !previewModal.classList.contains('hidden');
+
+    if (key === 'Escape') {
+      if (sendConfirmOpen) {
+        event.preventDefault();
+        hideSendConfirmModal();
+        return;
+      }
+      if (previewOpen) {
+        event.preventDefault();
+        hidePreviewModal();
+      }
+      return;
+    }
+
+    if (!modifierPressed || event.altKey) {
+      return;
+    }
+
+    if (key.toLowerCase() === 's') {
+      event.preventDefault();
+      saveDraft({ announce: true });
+      return;
+    }
+
+    if (key === 'Enter') {
+      event.preventDefault();
+      handlePreviewRequest();
     }
   });
+
+  function formatSubscriberCount(count) {
+    const safeCount = Number(count) || 0;
+    return safeCount.toLocaleString();
+  }
+
+  function buildSendLabel(count) {
+    const safeCount = Number(count) || 0;
+    if (safeCount <= 0) {
+      return 'Send newsletter';
+    }
+    const noun = safeCount === 1 ? 'subscriber' : 'subscribers';
+    return `Send to ${formatSubscriberCount(safeCount)} ${noun}`;
+  }
+
+  function updateSendButtonState(count = subscriberTotal) {
+    if (!sendButton || !sendButtonLabel) {
+      return;
+    }
+    const safeCount = Number(count) || 0;
+    const hasSubscribers = safeCount > 0;
+    sendButtonLabel.textContent = buildSendLabel(safeCount);
+    sendButton.disabled = !hasSubscribers || isSendingNewsletter;
+    sendButton.setAttribute('aria-disabled', String(sendButton.disabled));
+
+    if (sendConfirmButtonLabel) {
+      sendConfirmButtonLabel.textContent = buildSendLabel(safeCount);
+    }
+    if (sendConfirmCount) {
+      sendConfirmCount.textContent = formatSubscriberCount(safeCount);
+    }
+    if (sendConfirmButton) {
+      sendConfirmButton.disabled = !hasSubscribers || isSendingNewsletter;
+    }
+  }
+
+  updateSendButtonState(subscriberTotal);
+
+  function showSendConfirmModal() {
+    if (!sendConfirmModal) {
+      return;
+    }
+    if (subscriberTotal <= 0) {
+      showToast('Add subscribers before sending', {
+        type: 'error',
+        description: 'Import or add at least one subscriber to enable sending.',
+      });
+      return;
+    }
+    lastFocusedBeforeSendConfirm =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    updateSendButtonState(subscriberTotal);
+    if (sendConfirmMessage) {
+      const noun = subscriberTotal === 1 ? 'subscriber' : 'subscribers';
+      sendConfirmMessage.innerHTML = `You're about to send to <strong>${formatSubscriberCount(subscriberTotal)} ${noun}</strong>. This cannot be undone. Continue?`;
+    }
+    sendConfirmModal.classList.remove('hidden');
+    document.body.classList.add('modal-open');
+    if (typeof releaseSendConfirmFocusTrap === 'function') {
+      releaseSendConfirmFocusTrap();
+    }
+    releaseSendConfirmFocusTrap = createFocusTrap(sendConfirmModal);
+    window.setTimeout(() => {
+      sendConfirmButton?.focus({ preventScroll: true });
+    }, 50);
+  }
+
+  function hideSendConfirmModal({ restoreFocus = true, force = false } = {}) {
+    if (!sendConfirmModal) {
+      return;
+    }
+    if (isSendingNewsletter && !force) {
+      return;
+    }
+    sendConfirmModal.classList.add('hidden');
+    document.body.classList.remove('modal-open');
+    if (typeof releaseSendConfirmFocusTrap === 'function') {
+      releaseSendConfirmFocusTrap();
+      releaseSendConfirmFocusTrap = null;
+    }
+    if (restoreFocus) {
+      const fallbackTarget =
+        lastFocusedBeforeSendConfirm && document.body.contains(lastFocusedBeforeSendConfirm)
+          ? lastFocusedBeforeSendConfirm
+          : sendButton;
+      fallbackTarget?.focus({ preventScroll: true });
+    }
+    lastFocusedBeforeSendConfirm = null;
+  }
 
   function loadDraft() {
     try {
@@ -695,17 +908,62 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       const draft = JSON.parse(rawDraft);
-      if (draft?.title) {
-        titleInput.value = draft.title;
+      if (!draft || (!draft.title && !draft.previewText && !draft.content)) {
+        return;
       }
-      if (typeof draft?.previewText === 'string') {
-        previewTextInput.value = draft.previewText;
-        updatePreviewCounter();
+
+      const savedAt = new Date(draft.updatedAt || draft.savedAt || Date.now());
+      const now = Date.now();
+      const minutesAgo = Math.max(0, Math.floor((now - savedAt.getTime()) / 60000));
+      let whenText = 'just now';
+      if (minutesAgo >= 60) {
+        const hours = Math.floor(minutesAgo / 60);
+        whenText = hours === 1 ? 'about an hour ago' : `about ${hours} hours ago`;
+      } else if (minutesAgo >= 1) {
+        whenText = `${minutesAgo} minute${minutesAgo === 1 ? '' : 's'} ago`;
       }
-      if (typeof draft?.content === 'string') {
-        editor.innerHTML = draft.content;
-      }
-      setSendStatus('Draft restored from your last session.');
+
+      const restoreDraft = () => {
+        if (draft?.title) {
+          titleInput.value = draft.title;
+        }
+        if (typeof draft?.previewText === 'string') {
+          previewTextInput.value = draft.previewText;
+          updatePreviewCounter();
+        }
+        if (typeof draft?.content === 'string') {
+          editor.innerHTML = draft.content;
+        }
+        updateBestPractices();
+        setSendStatus('Draft restored from your last session.', false, {
+          variant: 'success',
+          toast: {
+            title: 'Draft restored',
+            type: 'success',
+            description: 'Picked up where you left off.',
+          },
+        });
+      };
+
+      showToast('Unsaved draft found', {
+        type: 'warning',
+        description: `Saved ${whenText}.`,
+        actions: [
+          {
+            label: 'Restore draft',
+            onClick: () => {
+              restoreDraft();
+            },
+          },
+          {
+            label: 'Dismiss',
+            dismissOnClick: true,
+            onClick: () => {
+              setSendStatus('');
+            },
+          },
+        ],
+      });
     } catch (error) {
       console.warn('Failed to load draft.', error);
     }
@@ -757,19 +1015,71 @@ document.addEventListener('DOMContentLoaded', () => {
     saveDraftButton.dataset.enhancedSave = 'true';
   }
 
-  sendButton?.addEventListener('click', async () => {
+  if (sendButton) {
+    sendButton.addEventListener('click', () => {
+      if (sendButton.disabled || isSendingNewsletter) {
+        return;
+      }
+      showSendConfirmModal();
+    });
+  }
+
+  if (sendConfirmButton) {
+    sendConfirmButton.addEventListener('click', () => {
+      if (isSendingNewsletter) {
+        return;
+      }
+      void executeSendNewsletter();
+    });
+  }
+
+  sendConfirmCancel?.addEventListener('click', () => {
+    hideSendConfirmModal();
+  });
+
+  sendConfirmClose?.addEventListener('click', () => {
+    hideSendConfirmModal();
+  });
+
+  sendConfirmBackdrop?.addEventListener('click', () => {
+    hideSendConfirmModal();
+  });
+
+  async function executeSendNewsletter() {
     const title = titleInput.value.trim();
     const rawContent = editor.innerHTML.trim();
     const content = sanitizeEditorHtml(rawContent);
     const previewText = previewTextInput.value.trim();
 
     if (!title || !content) {
-      setSendStatus('Title and content are required.', true);
+      hideSendConfirmModal();
+      setSendStatus('Sending failed: add a title and content first.', true, {
+        toast: {
+          title: 'Newsletter not ready',
+          type: 'error',
+          description: 'Add a subject line and some content before sending.',
+        },
+      });
       return;
     }
 
-    setSendStatus('Sending newsletter...');
-    setButtonLoading(sendButton, true, 'Sending');
+    isSendingNewsletter = true;
+    updateSendButtonState(subscriberTotal);
+    const recipientsLabel = subscriberTotal > 0
+      ? `${formatSubscriberCount(subscriberTotal)} subscriber${subscriberTotal === 1 ? '' : 's'}`
+      : 'your subscribers';
+    setSendStatus(`Sending newsletter to ${recipientsLabel}...`);
+    const buttonLoadingLabel = subscriberTotal > 0
+      ? `Sending to ${formatSubscriberCount(subscriberTotal)}…`
+      : 'Sending…';
+    setButtonLoading(sendButton, true, buttonLoadingLabel);
+    if (sendConfirmButton) {
+      setButtonLoading(sendConfirmButton, true, buttonLoadingLabel);
+    }
+    sendConfirmCancel?.setAttribute('disabled', 'true');
+    sendConfirmCancel?.setAttribute('aria-disabled', 'true');
+    sendConfirmClose?.setAttribute('disabled', 'true');
+    sendConfirmClose?.setAttribute('aria-disabled', 'true');
 
     try {
       const response = await fetch('/api/send-newsletter', {
@@ -856,9 +1166,19 @@ document.addEventListener('DOMContentLoaded', () => {
         },
       });
     } finally {
+      isSendingNewsletter = false;
       setButtonLoading(sendButton, false);
+      if (sendConfirmButton) {
+        setButtonLoading(sendConfirmButton, false);
+      }
+      sendConfirmCancel?.removeAttribute('disabled');
+      sendConfirmCancel?.removeAttribute('aria-disabled');
+      sendConfirmClose?.removeAttribute('disabled');
+      sendConfirmClose?.removeAttribute('aria-disabled');
+      updateSendButtonState(subscriberTotal);
+      hideSendConfirmModal({ force: true });
     }
-  });
+  }
 
   // Subscribers ----------------------------------------------------------------
   function normalizeEmail(value) {
@@ -1022,7 +1342,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return false;
       }
       if (!response.ok) {
-        throw new Error('Failed to load subscribers.');
+        throw new Error('Unable to load subscribers from the server.');
       }
       const data = await response.json();
       const storageMode = data?.storage || 'unknown';
@@ -1038,6 +1358,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const totalFromApi =
         typeof data?.count === 'number' ? data.count : subscribersCache.length;
+
+      subscriberTotal = totalFromApi;
+      updateSendButtonState(subscriberTotal);
 
       if (subscriberCount) {
         subscriberCount.textContent = totalFromApi;
@@ -1093,6 +1416,8 @@ document.addEventListener('DOMContentLoaded', () => {
           },
         });
       }
+      subscriberTotal = subscribersCache.length;
+      updateSendButtonState(subscriberTotal);
       return false;
     } finally {
       setSubscriberLoading(false);
@@ -1185,7 +1510,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (!response.ok) {
-        throw new Error(result?.message || result?.error || 'Failed to add subscriber.');
+        throw new Error(result?.message || result?.error || 'Could not add subscriber.');
       }
 
       const storageMode = result?.storage || 'unknown';
@@ -1201,6 +1526,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (typeof result?.count === 'number' && subscriberCount) {
         subscriberCount.textContent = result.count;
+      }
+
+      if (typeof result?.count === 'number') {
+        subscriberTotal = result.count;
+        updateSendButtonState(subscriberTotal);
       }
 
       const nonPersistentNote = storageMode === 'kv' ? '' : ' (non-persistent)';
@@ -1278,7 +1608,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (!response.ok) {
-        throw new Error(result?.message || result?.error || 'Failed to remove subscriber.');
+        throw new Error(result?.message || result?.error || 'Could not remove subscriber.');
       }
 
       const storageMode = result?.storage || 'unknown';
@@ -1294,6 +1624,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (typeof result?.count === 'number' && subscriberCount) {
         subscriberCount.textContent = result.count;
+      }
+
+      if (typeof result?.count === 'number') {
+        subscriberTotal = result.count;
+        updateSendButtonState(subscriberTotal);
       }
 
       const removalNote = storageMode === 'kv' ? '' : ' (non-persistent)';
@@ -1597,7 +1932,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (!response.ok || !payload) {
         const message =
-          payload?.message || payload?.error || 'Failed to load analytics.';
+          payload?.message || payload?.error || 'Unable to fetch analytics data.';
         throw new Error(message);
       }
 
@@ -1608,6 +1943,12 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error(error);
       const fallbackMessage = error?.message || 'Failed to load analytics. Please try again.';
       showAnalyticsError(fallbackMessage);
+      if (!silent) {
+        showToast('Analytics refresh failed', {
+          type: 'error',
+          description: fallbackMessage,
+        });
+      }
     }
   }
 
@@ -1958,7 +2299,11 @@ function loadDraft() {
     if (!saved) return;
 
     const draft = JSON.parse(saved);
-    const savedDate = new Date(draft.savedAt);
+    if (!draft || (!draft.title && !draft.previewText && !draft.content)) {
+      return;
+    }
+
+    const savedDate = new Date(draft.savedAt || draft.updatedAt || Date.now());
     const minutesAgo = Math.floor((Date.now() - savedDate.getTime()) / 60000);
 
     let timeText;
@@ -1973,19 +2318,44 @@ function loadDraft() {
       timeText = hoursAgo === 1 ? '1 hour ago' : `${hoursAgo} hours ago`;
     }
 
-    if (confirm(`Found unsaved draft from ${timeText}. Restore it?`)) {
+    const restore = () => {
       const titleInput = document.getElementById('newsletter-title');
       const previewInput = document.getElementById('newsletter-preview-text');
       const contentEditor = document.getElementById('newsletter-content');
 
-      if (titleInput) titleInput.value = draft.title;
-      if (previewInput) previewInput.value = draft.previewText;
-      if (contentEditor) contentEditor.innerHTML = draft.content;
+      if (titleInput) {
+        titleInput.value = draft.title || '';
+        titleInput.dispatchEvent(new Event('input'));
+      }
+      if (previewInput) {
+        previewInput.value = draft.previewText || '';
+        previewInput.dispatchEvent(new Event('input'));
+      }
+      if (contentEditor) {
+        contentEditor.innerHTML = draft.content || '';
+        contentEditor.dispatchEvent(new Event('input'));
+      }
 
-      if (titleInput) titleInput.dispatchEvent(new Event('input'));
-      if (previewInput) previewInput.dispatchEvent(new Event('input'));
-      if (contentEditor) contentEditor.dispatchEvent(new Event('input'));
-    }
+      showToast('Draft restored', {
+        type: 'success',
+        description: 'You are editing the last auto-saved version.',
+      });
+    };
+
+    showToast('Unsaved draft found', {
+      type: 'warning',
+      description: `Saved ${timeText}.`,
+      actions: [
+        {
+          label: 'Restore draft',
+          onClick: restore,
+        },
+        {
+          label: 'Dismiss',
+          dismissOnClick: true,
+        },
+      ],
+    });
   } catch (e) {
     console.error('Failed to load draft:', e);
   }
@@ -2060,12 +2430,13 @@ function initializeTestEmailButton() {
       return;
     }
 
-    if (!confirm('Send a test email to yourself? This will be sent to your admin email.')) {
-      return;
-    }
-
     testEmailBtn.disabled = true;
     testEmailBtn.innerHTML = '<span class="icon">⏳</span><span>Sending...</span>';
+    showToast('Sending test email', {
+      type: 'info',
+      description: 'We’ll deliver it to your admin inbox in just a moment.',
+      duration: 4000,
+    });
 
     try {
       const response = await fetch('/api/test-email', {
@@ -2091,14 +2462,14 @@ function initializeTestEmailButton() {
           description: 'Check your inbox to review the message.',
         });
       } else {
-        throw new Error(data.error || 'Failed to send test email');
+        throw new Error(data.error || 'Test email failed to send.');
       }
     } catch (error) {
       if (statusEl) {
         statusEl.textContent = `✗ Error: ${error.message}`;
         statusEl.style.color = '#f87171';
       }
-      showToast(error.message || 'Failed to send test email.', {
+      showToast(error.message || 'Test email failed to send.', {
         type: 'error',
       });
     } finally {

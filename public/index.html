@@ -166,7 +166,7 @@
             </button>
             <button id="send-button" class="btn primary icon-left" type="button">
               <span class="icon" aria-hidden="true">📧</span>
-              <span>Send newsletter</span>
+              <span id="send-button-label">Send newsletter</span>
             </button>
             <button id="save-draft-button" class="btn ghost icon-left" type="button">
               <span class="icon" aria-hidden="true">💾</span>
@@ -177,6 +177,7 @@
               <span>Clear draft</span>
             </button>
           </div>
+          <p class="shortcut-hint" aria-live="polite">Shortcuts: Ctrl/Cmd&nbsp;+&nbsp;S to save · Ctrl/Cmd&nbsp;+&nbsp;Enter to preview</p>
           <p id="send-status" class="status-message" role="status" aria-live="polite"></p>
         </footer>
       </article>
@@ -392,6 +393,32 @@
       </td>
     </tr>
   </template>
+
+  <div id="send-confirm-modal" class="modal hidden" role="dialog" aria-modal="true"
+    aria-labelledby="send-confirm-title" aria-describedby="send-confirm-message">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-dialog">
+      <header class="modal-header">
+        <h2 id="send-confirm-title">Confirm Send</h2>
+        <button id="send-confirm-close" class="btn icon-only" type="button" aria-label="Close confirmation">
+          ✕
+        </button>
+      </header>
+      <div class="modal-body confirm-modal-body">
+        <p id="send-confirm-message">
+          You're about to send to <strong><span id="send-confirm-count">0</span> subscribers</strong>. This cannot be
+          undone. Continue?
+        </p>
+      </div>
+      <footer class="modal-footer">
+        <button id="send-confirm-cancel" class="btn ghost" type="button">Cancel</button>
+        <button id="send-confirm-button" class="btn primary icon-left" type="button">
+          <span class="icon" aria-hidden="true">📧</span>
+          <span id="send-confirm-button-label">Send newsletter</span>
+        </button>
+      </footer>
+    </div>
+  </div>
 
   <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
